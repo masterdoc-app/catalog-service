@@ -79,4 +79,22 @@ class AssetRoutesTest {
         assertTrue(list.bodyAsText().contains("\"A\""))
         assertTrue(!list.bodyAsText().contains("\"B\""))
     }
+
+    @Test
+    fun descriptionPersistedOnCreate() = testApplication {
+        val store = AssetStore()
+        application { module(store) }
+        val create =
+            client.post("/assets") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody(
+                    """{"name":"Кран-балка","siteId":"site-1","category":"lifting","description":"Грузоподъёмная балка","source":"ai_generated"}""",
+                )
+            }
+        assertEquals(HttpStatusCode.Created, create.status)
+        val body = json.parseToJsonElement(create.bodyAsText()).jsonObject
+        assertEquals("Грузоподъёмная балка", body["description"]!!.jsonPrimitive.content)
+        assertEquals("lifting", body["category"]!!.jsonPrimitive.content)
+    }
 }
