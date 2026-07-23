@@ -81,6 +81,74 @@ class AssetRoutesTest {
     }
 
     @Test
+    fun rejectDraftSucceeds() = testApplication {
+        val store = AssetStore()
+        application { module(store) }
+        val create =
+            client.post("/assets") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody("""{"name":"Draft","siteId":"s","source":"ai_generated"}""")
+            }
+        val id = json.parseToJsonElement(create.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+
+        val reject = client.post("/assets/$id/reject") { header("X-Org-Id", "org-1") }
+        assertEquals(HttpStatusCode.NoContent, reject.status)
+
+        val get = client.get("/assets/$id") { header("X-Org-Id", "org-1") }
+        assertEquals(HttpStatusCode.NotFound, get.status)
+    }
+
+    @Test
+    fun rejectActiveFails() = testApplication {
+        val store = AssetStore()
+        application { module(store) }
+        val create =
+            client.post("/assets") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody("""{"name":"Active","siteId":"s","source":"manual","asDraft":false}""")
+            }
+        val id = json.parseToJsonElement(create.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+
+        val reject = client.post("/assets/$id/reject") { header("X-Org-Id", "org-1") }
+        assertEquals(HttpStatusCode.BadRequest, reject.status)
+    }
+
+    @Test
+    fun getOtherOrgAssetNotFound() = testApplication {
+        val store = AssetStore()
+        application { module(store) }
+        val create =
+            client.post("/assets") {
+                header("X-Org-Id", "org-a")
+                contentType(ContentType.Application.Json)
+                setBody("""{"name":"Secret","siteId":"s"}""")
+            }
+        val id = json.parseToJsonElement(create.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+
+        val get = client.get("/assets/$id") { header("X-Org-Id", "org-b") }
+        assertEquals(HttpStatusCode.NotFound, get.status)
+    }
+
+    @Test
+    fun aiGeneratedForcesDraftEvenWhenAsDraftFalse() = testApplication {
+        val store = AssetStore()
+        application { module(store) }
+        val create =
+            client.post("/assets") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody("""{"name":"AI","siteId":"s","source":"ai_generated","asDraft":false}""")
+            }
+        assertEquals(HttpStatusCode.Created, create.status)
+        assertEquals(
+            "draft",
+            json.parseToJsonElement(create.bodyAsText()).jsonObject["status"]!!.jsonPrimitive.content,
+        )
+    }
+
+    @Test
     fun descriptionPersistedOnCreate() = testApplication {
         val store = AssetStore()
         application { module(store) }
