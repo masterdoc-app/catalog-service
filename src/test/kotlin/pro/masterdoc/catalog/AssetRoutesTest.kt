@@ -6,7 +6,6 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
-import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
@@ -20,10 +19,22 @@ import kotlinx.serialization.json.jsonPrimitive
 class AssetRoutesTest {
     private val json = Json { ignoreUnknownKeys = true }
 
+    private suspend fun io.ktor.client.HttpClient.ensureSite(
+        orgId: String,
+        siteId: String = "site-1",
+        name: String = "Site",
+    ) {
+        post("/sites") {
+            header("X-Org-Id", orgId)
+            contentType(ContentType.Application.Json)
+            setBody("""{"id":"$siteId","name":"$name"}""")
+        }
+    }
+
     @Test
     fun createDraftAndConfirm() = testApplication {
-        val store = AssetStore()
-        application { module(store) }
+        application { module() }
+        client.ensureSite("org-1")
         val create =
             client.post("/assets") {
                 header("X-Org-Id", "org-1")
@@ -48,8 +59,8 @@ class AssetRoutesTest {
 
     @Test
     fun confirmNonDraftFails() = testApplication {
-        val store = AssetStore()
-        application { module(store) }
+        application { module() }
+        client.ensureSite("org-1", "s")
         val create =
             client.post("/assets") {
                 header("X-Org-Id", "org-1")
@@ -63,8 +74,9 @@ class AssetRoutesTest {
 
     @Test
     fun listScopedByOrg() = testApplication {
-        val store = AssetStore()
-        application { module(store) }
+        application { module() }
+        client.ensureSite("org-a", "s")
+        client.ensureSite("org-b", "s")
         client.post("/assets") {
             header("X-Org-Id", "org-a")
             contentType(ContentType.Application.Json)
@@ -82,8 +94,8 @@ class AssetRoutesTest {
 
     @Test
     fun rejectDraftSucceeds() = testApplication {
-        val store = AssetStore()
-        application { module(store) }
+        application { module() }
+        client.ensureSite("org-1", "s")
         val create =
             client.post("/assets") {
                 header("X-Org-Id", "org-1")
@@ -101,8 +113,8 @@ class AssetRoutesTest {
 
     @Test
     fun rejectActiveFails() = testApplication {
-        val store = AssetStore()
-        application { module(store) }
+        application { module() }
+        client.ensureSite("org-1", "s")
         val create =
             client.post("/assets") {
                 header("X-Org-Id", "org-1")
@@ -117,8 +129,8 @@ class AssetRoutesTest {
 
     @Test
     fun getOtherOrgAssetNotFound() = testApplication {
-        val store = AssetStore()
-        application { module(store) }
+        application { module() }
+        client.ensureSite("org-a", "s")
         val create =
             client.post("/assets") {
                 header("X-Org-Id", "org-a")
@@ -133,8 +145,8 @@ class AssetRoutesTest {
 
     @Test
     fun aiGeneratedForcesDraftEvenWhenAsDraftFalse() = testApplication {
-        val store = AssetStore()
-        application { module(store) }
+        application { module() }
+        client.ensureSite("org-1", "s")
         val create =
             client.post("/assets") {
                 header("X-Org-Id", "org-1")
@@ -150,8 +162,8 @@ class AssetRoutesTest {
 
     @Test
     fun descriptionPersistedOnCreate() = testApplication {
-        val store = AssetStore()
-        application { module(store) }
+        application { module() }
+        client.ensureSite("org-1")
         val create =
             client.post("/assets") {
                 header("X-Org-Id", "org-1")
@@ -164,5 +176,42 @@ class AssetRoutesTest {
         val body = json.parseToJsonElement(create.bodyAsText()).jsonObject
         assertEquals("Грузоподъёмная балка", body["description"]!!.jsonPrimitive.content)
         assertEquals("lifting", body["category"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun createWithUnknownSiteFails() = testApplication {
+        application { module() }
+        val create =
+            client.post("/assets") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody("""{"name":"X","siteId":"missing"}""")
+            }
+        assertEquals(HttpStatusCode.BadRequest, create.status)
+        assertTrue(create.bodyAsText().contains("Unknown siteId"))
+    }
+
+    @Test
+    fun moveAssetChangesSite() = testApplication {
+        application { module() }
+        client.ensureSite("org-1", "a", "A")
+        client.ensureSite("org-1", "b", "B")
+        val create =
+            client.post("/assets") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody("""{"name":"Pump","siteId":"a","asDraft":false}""")
+            }
+        val id = json.parseToJsonElement(create.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+        val moved =
+            client.post("/assets/$id/move") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody("""{"siteId":"b"}""")
+            }
+        assertEquals(HttpStatusCode.OK, moved.status)
+        assertEquals("b", json.parseToJsonElement(moved.bodyAsText()).jsonObject["siteId"]!!.jsonPrimitive.content)
+        val filtered = client.get("/assets?siteId=b") { header("X-Org-Id", "org-1") }
+        assertTrue(filtered.bodyAsText().contains(id))
     }
 }

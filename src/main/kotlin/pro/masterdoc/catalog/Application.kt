@@ -13,8 +13,11 @@ import io.ktor.server.request.header
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
+import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
+import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
+import io.ktor.server.routing.put
 import io.ktor.server.routing.routing
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -23,10 +26,15 @@ import java.util.concurrent.ConcurrentHashMap
 
 fun main() {
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8091
-    embeddedServer(Netty, port = port, host = "0.0.0.0") { module(AssetStore()) }.start(wait = true)
+    val sites = SiteStore()
+    val assets = AssetStore()
+    embeddedServer(Netty, port = port, host = "0.0.0.0") { module(sites, assets) }.start(wait = true)
 }
 
-fun Application.module(store: AssetStore) {
+fun Application.module(
+    sites: SiteStore = SiteStore(),
+    assets: AssetStore = AssetStore(),
+) {
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true; isLenient = true })
     }
@@ -37,33 +45,79 @@ fun Application.module(store: AssetStore) {
         exception<NoSuchElementException> { call, cause ->
             call.respondText(cause.message ?: "Not Found", status = HttpStatusCode.NotFound)
         }
+        exception<ConflictException> { call, cause ->
+            call.respondText(cause.message ?: "Conflict", status = HttpStatusCode.Conflict)
+        }
     }
     routing {
         get("/health") { call.respond(mapOf("status" to "ok")) }
+
+        post("/sites") {
+            val orgId = call.orgId()
+            val req = call.receive<CreateSiteRequest>()
+            call.respond(HttpStatusCode.Created, sites.create(orgId, req))
+        }
+        get("/sites") {
+            val orgId = call.orgId()
+            call.respond(SiteList(items = sites.list(orgId)))
+        }
+        get("/sites/{id}") {
+            val orgId = call.orgId()
+            call.respond(sites.get(orgId, call.parameters["id"]!!))
+        }
+        put("/sites/{id}") {
+            val orgId = call.orgId()
+            val req = call.receive<UpdateSiteRequest>()
+            call.respond(sites.update(orgId, call.parameters["id"]!!, req))
+        }
+        patch("/sites/{id}") {
+            val orgId = call.orgId()
+            val req = call.receive<UpdateSiteRequest>()
+            call.respond(sites.update(orgId, call.parameters["id"]!!, req))
+        }
+        delete("/sites/{id}") {
+            val orgId = call.orgId()
+            val id = call.parameters["id"]!!
+            sites.get(orgId, id)
+            if (assets.countOnSite(orgId, id) > 0) {
+                throw ConflictException("Site has assets; move or delete them first")
+            }
+            sites.delete(orgId, id)
+            call.respond(HttpStatusCode.NoContent)
+        }
+
         post("/assets") {
             val orgId = call.orgId()
             val req = call.receive<CreateAssetRequest>()
-            val asset = store.create(orgId, req)
-            call.respond(HttpStatusCode.Created, asset)
+            if (!sites.exists(orgId, req.siteId)) {
+                throw IllegalArgumentException("Unknown siteId")
+            }
+            call.respond(HttpStatusCode.Created, assets.create(orgId, req))
         }
         get("/assets") {
             val orgId = call.orgId()
-            call.respond(AssetList(items = store.list(orgId)))
+            val siteId = call.request.queryParameters["siteId"]?.takeIf { it.isNotBlank() }
+            call.respond(AssetList(items = assets.list(orgId, siteId)))
         }
         get("/assets/{id}") {
             val orgId = call.orgId()
-            val id = call.parameters["id"]!!
-            call.respond(store.get(orgId, id))
+            call.respond(assets.get(orgId, call.parameters["id"]!!))
+        }
+        post("/assets/{id}/move") {
+            val orgId = call.orgId()
+            val req = call.receive<MoveAssetRequest>()
+            if (!sites.exists(orgId, req.siteId)) {
+                throw IllegalArgumentException("Unknown siteId")
+            }
+            call.respond(assets.move(orgId, call.parameters["id"]!!, req.siteId))
         }
         post("/assets/{id}/confirm") {
             val orgId = call.orgId()
-            val id = call.parameters["id"]!!
-            call.respond(store.confirm(orgId, id))
+            call.respond(assets.confirm(orgId, call.parameters["id"]!!))
         }
         post("/assets/{id}/reject") {
             val orgId = call.orgId()
-            val id = call.parameters["id"]!!
-            store.reject(orgId, id)
+            assets.reject(orgId, call.parameters["id"]!!)
             call.respond(HttpStatusCode.NoContent)
         }
     }
@@ -72,11 +126,37 @@ fun Application.module(store: AssetStore) {
 private fun io.ktor.server.application.ApplicationCall.orgId(): String =
     request.header("X-Org-Id")?.takeIf { it.isNotBlank() } ?: "default-org"
 
+class ConflictException(message: String) : RuntimeException(message)
+
 @Serializable
 enum class RecordStatus { draft, active }
 
 @Serializable
 enum class RecordSource { manual, ai_generated }
+
+@Serializable
+data class Site(
+    val id: String,
+    val orgId: String,
+    val name: String,
+    val address: String? = null,
+)
+
+@Serializable
+data class CreateSiteRequest(
+    val name: String,
+    val address: String? = null,
+    val id: String? = null,
+)
+
+@Serializable
+data class UpdateSiteRequest(
+    val name: String? = null,
+    val address: String? = null,
+)
+
+@Serializable
+data class SiteList(val items: List<Site>)
 
 @Serializable
 data class Asset(
@@ -105,7 +185,60 @@ data class CreateAssetRequest(
 )
 
 @Serializable
+data class MoveAssetRequest(val siteId: String)
+
+@Serializable
 data class AssetList(val items: List<Asset>)
+
+class SiteStore {
+    private val byKey = ConcurrentHashMap<String, Site>()
+
+    private fun key(orgId: String, id: String) = "$orgId::$id"
+
+    fun create(orgId: String, req: CreateSiteRequest): Site {
+        require(req.name.isNotBlank()) { "name required" }
+        val id = req.id?.trim()?.takeIf { it.isNotEmpty() } ?: UUID.randomUUID().toString()
+        val k = key(orgId, id)
+        require(byKey[k] == null) { "site id already exists" }
+        val site =
+            Site(
+                id = id,
+                orgId = orgId,
+                name = req.name.trim(),
+                address = req.address?.trim()?.takeIf { it.isNotEmpty() },
+            )
+        byKey[k] = site
+        return site
+    }
+
+    fun list(orgId: String): List<Site> = byKey.values.filter { it.orgId == orgId }.sortedBy { it.name }
+
+    fun get(orgId: String, id: String): Site =
+        byKey[key(orgId, id)] ?: throw NoSuchElementException("Site not found")
+
+    fun update(orgId: String, id: String, req: UpdateSiteRequest): Site {
+        val current = get(orgId, id)
+        val updated =
+            current.copy(
+                name = req.name?.trim()?.takeIf { it.isNotEmpty() } ?: current.name,
+                address =
+                    when {
+                        req.address == null -> current.address
+                        req.address.isBlank() -> null
+                        else -> req.address.trim()
+                    },
+            )
+        byKey[key(orgId, id)] = updated
+        return updated
+    }
+
+    fun delete(orgId: String, id: String) {
+        get(orgId, id)
+        byKey.remove(key(orgId, id))
+    }
+
+    fun exists(orgId: String, id: String): Boolean = byKey.containsKey(key(orgId, id))
+}
 
 class AssetStore {
     private val byId = ConcurrentHashMap<String, Asset>()
@@ -132,12 +265,23 @@ class AssetStore {
         return asset
     }
 
-    fun list(orgId: String): List<Asset> = byId.values.filter { it.orgId == orgId }.sortedBy { it.name }
+    fun list(orgId: String, siteId: String? = null): List<Asset> =
+        byId.values
+            .filter { it.orgId == orgId && (siteId == null || it.siteId == siteId) }
+            .sortedBy { it.name }
 
     fun get(orgId: String, id: String): Asset {
         val asset = byId[id] ?: throw NoSuchElementException("Asset not found")
         if (asset.orgId != orgId) throw NoSuchElementException("Asset not found")
         return asset
+    }
+
+    fun move(orgId: String, id: String, siteId: String): Asset {
+        require(siteId.isNotBlank()) { "siteId required" }
+        val asset = get(orgId, id)
+        val moved = asset.copy(siteId = siteId)
+        byId[id] = moved
+        return moved
     }
 
     fun confirm(orgId: String, id: String): Asset {
@@ -154,6 +298,8 @@ class AssetStore {
         byId.remove(id)
     }
 
-    fun exists(orgId: String, id: String): Boolean =
-        runCatching { get(orgId, id) }.isSuccess
+    fun countOnSite(orgId: String, siteId: String): Int =
+        byId.values.count { it.orgId == orgId && it.siteId == siteId }
+
+    fun exists(orgId: String, id: String): Boolean = runCatching { get(orgId, id) }.isSuccess
 }
