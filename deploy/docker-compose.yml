@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    image: masterdoc-catalog-service:latest
+    image: ${SERVICE_IMAGE:-masterdoc-catalog-service:latest}
     restart: unless-stopped
     ports:
       - "${CATALOG_SERVICE_PORT:-8091}:8091"
