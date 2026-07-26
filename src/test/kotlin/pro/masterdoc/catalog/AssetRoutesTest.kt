@@ -214,4 +214,54 @@ class AssetRoutesTest {
         val filtered = client.get("/assets?siteId=b") { header("X-Org-Id", "org-1") }
         assertTrue(filtered.bodyAsText().contains(id))
     }
+
+    @Test
+    fun unlinkDocumentsRemovesIds() = testApplication {
+        application { module() }
+        client.ensureSite("org-1")
+        val create =
+            client.post("/assets") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody(
+                    """{"name":"Компрессор","siteId":"site-1","documentIds":["doc-1","doc-2","doc-3"]}""",
+                )
+            }
+        val id = json.parseToJsonElement(create.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+
+        val unlinked =
+            client.post("/assets/$id/unlink-documents") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody("""{"documentIds":["doc-1","doc-3"]}""")
+            }
+        assertEquals(HttpStatusCode.OK, unlinked.status)
+        val body = json.parseToJsonElement(unlinked.bodyAsText()).jsonObject
+        assertEquals("[\"doc-2\"]", body["documentIds"].toString())
+
+        val get = client.get("/assets/$id") { header("X-Org-Id", "org-1") }
+        assertTrue(get.bodyAsText().contains("doc-2"))
+        assertTrue(!get.bodyAsText().contains("doc-1"))
+    }
+
+    @Test
+    fun unlinkDocumentsOtherOrgNotFound() = testApplication {
+        application { module() }
+        client.ensureSite("org-a")
+        val create =
+            client.post("/assets") {
+                header("X-Org-Id", "org-a")
+                contentType(ContentType.Application.Json)
+                setBody("""{"name":"A","siteId":"site-1","documentIds":["d1"]}""")
+            }
+        val id = json.parseToJsonElement(create.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+
+        val unlinked =
+            client.post("/assets/$id/unlink-documents") {
+                header("X-Org-Id", "org-b")
+                contentType(ContentType.Application.Json)
+                setBody("""{"documentIds":["d1"]}""")
+            }
+        assertEquals(HttpStatusCode.NotFound, unlinked.status)
+    }
 }

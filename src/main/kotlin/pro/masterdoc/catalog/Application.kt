@@ -132,6 +132,11 @@ fun Application.module(
             assets.reject(orgId, call.parameters["id"]!!)
             call.respond(HttpStatusCode.NoContent)
         }
+        post("/assets/{id}/unlink-documents") {
+            val orgId = call.orgId()
+            val req = call.receive<UnlinkDocumentsRequest>()
+            call.respond(assets.unlinkDocumentIds(orgId, call.parameters["id"]!!, req.documentIds))
+        }
     }
 }
 
@@ -198,6 +203,9 @@ data class CreateAssetRequest(
 
 @Serializable
 data class MoveAssetRequest(val siteId: String)
+
+@Serializable
+data class UnlinkDocumentsRequest(val documentIds: List<String>)
 
 @Serializable
 data class AssetList(val items: List<Asset>)
@@ -312,6 +320,15 @@ class AssetStore {
 
     fun countOnSite(orgId: String, siteId: String): Int =
         byId.values.count { it.orgId == orgId && it.siteId == siteId }
+
+    fun unlinkDocumentIds(orgId: String, id: String, documentIds: List<String>): Asset {
+        require(documentIds.isNotEmpty()) { "documentIds required" }
+        val asset = get(orgId, id)
+        val toRemove = documentIds.toSet()
+        val updated = asset.copy(documentIds = asset.documentIds.filter { it !in toRemove })
+        byId[id] = updated
+        return updated
+    }
 
     fun exists(orgId: String, id: String): Boolean = runCatching { get(orgId, id) }.isSuccess
 }
