@@ -115,6 +115,11 @@ fun Application.module(
             val orgId = call.orgId()
             call.respond(assets.get(orgId, call.parameters["id"]!!))
         }
+        patch("/assets/{id}") {
+            val orgId = call.orgId()
+            val req = call.receive<UpdateAssetRequest>()
+            call.respond(assets.update(orgId, call.parameters["id"]!!, req))
+        }
         post("/assets/{id}/move") {
             val orgId = call.orgId()
             val req = call.receive<MoveAssetRequest>()
@@ -199,6 +204,15 @@ data class CreateAssetRequest(
     val documentIds: List<String> = emptyList(),
     val source: RecordSource = RecordSource.manual,
     val asDraft: Boolean = true,
+)
+
+@Serializable
+data class UpdateAssetRequest(
+    val name: String? = null,
+    val inventoryNo: String? = null,
+    val category: String? = null,
+    val description: String? = null,
+    val documentIds: List<String>? = null,
 )
 
 @Serializable
@@ -296,6 +310,23 @@ class AssetStore {
         return asset
     }
 
+    fun update(orgId: String, id: String, req: UpdateAssetRequest): Asset {
+        val asset = get(orgId, id)
+        val updated =
+            asset.copy(
+                name = req.name?.trim()?.takeIf { it.isNotEmpty() } ?: asset.name,
+                inventoryNo = req.inventoryNo.patchNullable(asset.inventoryNo),
+                category = req.category.patchNullable(asset.category),
+                description = req.description.patchNullable(asset.description),
+                documentIds =
+                    req.documentIds?.let { documentIds ->
+                        (asset.documentIds + documentIds).distinct()
+                    } ?: asset.documentIds,
+            )
+        byId[id] = updated
+        return updated
+    }
+
     fun move(orgId: String, id: String, siteId: String): Asset {
         require(siteId.isNotBlank()) { "siteId required" }
         val asset = get(orgId, id)
@@ -332,3 +363,10 @@ class AssetStore {
 
     fun exists(orgId: String, id: String): Boolean = runCatching { get(orgId, id) }.isSuccess
 }
+
+private fun String?.patchNullable(current: String?): String? =
+    when {
+        this == null -> current
+        isBlank() -> null
+        else -> trim()
+    }

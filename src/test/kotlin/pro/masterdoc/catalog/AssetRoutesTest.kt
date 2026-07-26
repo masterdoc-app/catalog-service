@@ -2,6 +2,7 @@ package pro.masterdoc.catalog
 
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
@@ -176,6 +177,57 @@ class AssetRoutesTest {
         val body = json.parseToJsonElement(create.bodyAsText()).jsonObject
         assertEquals("Грузоподъёмная балка", body["description"]!!.jsonPrimitive.content)
         assertEquals("lifting", body["category"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun patchAssetUpdatesNameAndDescription() = testApplication {
+        application { module() }
+        client.ensureSite("org-1")
+        val create =
+            client.post("/assets") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody("""{"name":"Черновик","siteId":"site-1","description":"Старое описание"}""")
+            }
+        val id = json.parseToJsonElement(create.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+
+        val patch =
+            client.patch("/assets/$id") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody("""{"name":"Компрессор","description":"Описание из документа"}""")
+            }
+
+        assertEquals(HttpStatusCode.OK, patch.status)
+        val body = json.parseToJsonElement(patch.bodyAsText()).jsonObject
+        assertEquals("Компрессор", body["name"]!!.jsonPrimitive.content)
+        assertEquals("Описание из документа", body["description"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun patchAssetUnionsDocumentIds() = testApplication {
+        application { module() }
+        client.ensureSite("org-1")
+        val create =
+            client.post("/assets") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody("""{"name":"Компрессор","siteId":"site-1","documentIds":["doc-1"]}""")
+            }
+        val id = json.parseToJsonElement(create.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+
+        val patch =
+            client.patch("/assets/$id") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody("""{"documentIds":["doc-1","doc-2"]}""")
+            }
+
+        assertEquals(HttpStatusCode.OK, patch.status)
+        assertEquals(
+            "[\"doc-1\",\"doc-2\"]",
+            json.parseToJsonElement(patch.bodyAsText()).jsonObject["documentIds"].toString(),
+        )
     }
 
     @Test
