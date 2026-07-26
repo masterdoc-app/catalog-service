@@ -7,6 +7,7 @@ import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
+import io.ktor.server.plugins.calllogging.CallLogging
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.header
@@ -21,11 +22,16 @@ import io.ktor.server.routing.put
 import io.ktor.server.routing.routing
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import org.slf4j.LoggerFactory
+import org.slf4j.event.Level
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
+private val log = LoggerFactory.getLogger("pro.masterdoc.catalog")
+
 fun main() {
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8091
+    log.info("event=startup port=$port")
     val sites = SiteStore()
     val assets = AssetStore()
     embeddedServer(Netty, port = port, host = "0.0.0.0") { module(sites, assets) }.start(wait = true)
@@ -35,17 +41,23 @@ fun Application.module(
     sites: SiteStore = SiteStore(),
     assets: AssetStore = AssetStore(),
 ) {
+    install(CallLogging) {
+        level = Level.INFO
+    }
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true; isLenient = true })
     }
     install(StatusPages) {
         exception<IllegalArgumentException> { call, cause ->
+            log.warn("event=bad_request reason=${cause.message}")
             call.respondText(cause.message ?: "Bad Request", status = HttpStatusCode.BadRequest)
         }
         exception<NoSuchElementException> { call, cause ->
+            log.warn("event=not_found reason=${cause.message}")
             call.respondText(cause.message ?: "Not Found", status = HttpStatusCode.NotFound)
         }
         exception<ConflictException> { call, cause ->
+            log.warn("event=conflict reason=${cause.message}")
             call.respondText(cause.message ?: "Conflict", status = HttpStatusCode.Conflict)
         }
     }
