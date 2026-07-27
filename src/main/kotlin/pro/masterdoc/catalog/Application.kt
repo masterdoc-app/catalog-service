@@ -34,18 +34,20 @@ fun main() {
     log.info("event=startup port=$port")
     val sites = SiteStore()
     val assets = AssetStore()
-    embeddedServer(Netty, port = port, host = "0.0.0.0") { module(sites, assets) }.start(wait = true)
+    val scopes = ScopeStore()
+    embeddedServer(Netty, port = port, host = "0.0.0.0") { module(sites, assets, scopes) }.start(wait = true)
 }
 
 fun Application.module(
     sites: SiteStore = SiteStore(),
     assets: AssetStore = AssetStore(),
+    scopes: ScopeStore = ScopeStore(),
 ) {
     install(CallLogging) {
         level = Level.INFO
     }
     install(ContentNegotiation) {
-        json(Json { ignoreUnknownKeys = true; isLenient = true })
+        json(Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true })
     }
     install(StatusPages) {
         exception<IllegalArgumentException> { call, cause ->
@@ -147,6 +149,29 @@ fun Application.module(
             val req = call.receive<UnlinkDocumentsRequest>()
             call.respond(assets.unlinkDocumentIds(orgId, call.parameters["id"]!!, req.documentIds))
         }
+
+        get("/user-scopes/candidates/{assetId}") {
+            val orgId = call.orgId()
+            val assetId = call.parameters["assetId"]!!
+            val asset = assets.get(orgId, assetId)
+            call.respond(ScopeCandidatesResponse(userIds = scopes.candidates(orgId, asset)))
+        }
+        get("/user-scopes/{userId}") {
+            val orgId = call.orgId()
+            call.respond(scopes.get(orgId, call.parameters["userId"]!!))
+        }
+        put("/user-scopes/{userId}") {
+            val orgId = call.orgId()
+            val req = call.receive<PutUserScopeRequest>()
+            call.respond(scopes.put(orgId, call.parameters["userId"]!!, req))
+        }
+        get("/user-scopes/{userId}/covers/{assetId}") {
+            val orgId = call.orgId()
+            val userId = call.parameters["userId"]!!
+            val assetId = call.parameters["assetId"]!!
+            val asset = assets.get(orgId, assetId)
+            call.respond(CoversResponse(covers = scopes.covers(orgId, userId, asset)))
+        }
     }
 }
 
@@ -228,6 +253,61 @@ data class UnlinkDocumentsRequest(val documentIds: List<String>)
 
 @Serializable
 data class AssetList(val items: List<Asset>)
+
+@Serializable
+data class UserScope(
+    val userId: String,
+    val orgId: String,
+    val siteIds: List<String> = emptyList(),
+    val assetIds: List<String> = emptyList(),
+)
+
+@Serializable
+data class PutUserScopeRequest(
+    val siteIds: List<String> = emptyList(),
+    val assetIds: List<String> = emptyList(),
+)
+
+@Serializable
+data class CoversResponse(val covers: Boolean)
+
+@Serializable
+data class ScopeCandidatesResponse(val userIds: List<String>)
+
+class ScopeStore {
+    private val byKey = ConcurrentHashMap<String, UserScope>()
+
+    private fun key(orgId: String, userId: String) = "$orgId::$userId"
+
+    fun get(orgId: String, userId: String): UserScope =
+        byKey[key(orgId, userId)] ?: UserScope(userId = userId, orgId = orgId)
+
+    fun put(orgId: String, userId: String, req: PutUserScopeRequest): UserScope {
+        val scope =
+            UserScope(
+                userId = userId,
+                orgId = orgId,
+                siteIds = req.siteIds.distinct(),
+                assetIds = req.assetIds.distinct(),
+            )
+        byKey[key(orgId, userId)] = scope
+        return scope
+    }
+
+    fun covers(orgId: String, userId: String, asset: Asset): Boolean {
+        val scope = get(orgId, userId)
+        if (scope.siteIds.isEmpty() && scope.assetIds.isEmpty()) return false
+        if (asset.id in scope.assetIds) return true
+        if (asset.siteId in scope.siteIds) return true
+        return false
+    }
+
+    fun candidates(orgId: String, asset: Asset): List<String> =
+        byKey.values
+            .filter { it.orgId == orgId && covers(orgId, it.userId, asset) }
+            .map { it.userId }
+            .sorted()
+}
 
 class SiteStore {
     private val byKey = ConcurrentHashMap<String, Site>()
