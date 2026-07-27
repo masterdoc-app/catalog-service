@@ -111,7 +111,14 @@ fun Application.module(
         get("/assets") {
             val orgId = call.orgId()
             val siteId = call.request.queryParameters["siteId"]?.takeIf { it.isNotBlank() }
-            call.respond(AssetList(items = assets.list(orgId, siteId)))
+            val listed = assets.list(orgId, siteId)
+            val items =
+                if (call.scopeFilterEnabled()) {
+                    scopes.filterAllowed(orgId, call.userId(), listed)
+                } else {
+                    listed
+                }
+            call.respond(AssetList(items = items))
         }
         get("/assets/{id}") {
             val orgId = call.orgId()
@@ -177,6 +184,14 @@ fun Application.module(
 
 private fun io.ktor.server.application.ApplicationCall.orgId(): String =
     request.header("X-Org-Id")?.takeIf { it.isNotBlank() } ?: "default-org"
+
+private fun io.ktor.server.application.ApplicationCall.userId(): String =
+    request.header("X-User-Id")?.takeIf { it.isNotBlank() } ?: "unknown"
+
+private fun io.ktor.server.application.ApplicationCall.scopeFilterEnabled(): Boolean {
+    val value = request.header("X-Scope-Filter")?.trim()?.lowercase() ?: return false
+    return value == "1" || value == "true"
+}
 
 class ConflictException(message: String) : RuntimeException(message)
 
@@ -307,6 +322,9 @@ class ScopeStore {
             .filter { it.orgId == orgId && covers(orgId, it.userId, asset) }
             .map { it.userId }
             .sorted()
+
+    fun filterAllowed(orgId: String, userId: String, assets: List<Asset>): List<Asset> =
+        assets.filter { covers(orgId, userId, it) }
 }
 
 class SiteStore {
