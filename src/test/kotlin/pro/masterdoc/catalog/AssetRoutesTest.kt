@@ -180,7 +180,7 @@ class AssetRoutesTest {
     }
 
     @Test
-    fun patchAssetUpdatesNameAndDescription() = testApplication {
+    fun patchAssetUpdatesNameInventoryNoAndDescription() = testApplication {
         application { module() }
         client.ensureSite("org-1")
         val create =
@@ -195,17 +195,44 @@ class AssetRoutesTest {
             client.patch("/assets/$id") {
                 header("X-Org-Id", "org-1")
                 contentType(ContentType.Application.Json)
-                setBody("""{"name":"Компрессор","description":"Описание из документа"}""")
+                setBody("""{"name":"Компрессор","inventoryNo":"ИНВ-42","description":"Описание из документа"}""")
             }
 
         assertEquals(HttpStatusCode.OK, patch.status)
         val body = json.parseToJsonElement(patch.bodyAsText()).jsonObject
         assertEquals("Компрессор", body["name"]!!.jsonPrimitive.content)
+        assertEquals("ИНВ-42", body["inventoryNo"]!!.jsonPrimitive.content)
         assertEquals("Описание из документа", body["description"]!!.jsonPrimitive.content)
     }
 
     @Test
-    fun patchAssetUnionsDocumentIds() = testApplication {
+    fun patchAssetReplacesDocumentIdsWithAtMostOne() = testApplication {
+        application { module() }
+        client.ensureSite("org-1")
+        val create =
+            client.post("/assets") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody("""{"name":"Компрессор","siteId":"site-1","documentIds":["doc-1"]}""")
+            }
+        val id = json.parseToJsonElement(create.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+
+        val patch =
+            client.patch("/assets/$id") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody("""{"documentIds":["doc-2"]}""")
+            }
+
+        assertEquals(HttpStatusCode.OK, patch.status)
+        assertEquals(
+            "[\"doc-2\"]",
+            json.parseToJsonElement(patch.bodyAsText()).jsonObject["documentIds"].toString(),
+        )
+    }
+
+    @Test
+    fun patchAssetRejectsMultipleDocumentIds() = testApplication {
         application { module() }
         client.ensureSite("org-1")
         val create =
@@ -223,11 +250,22 @@ class AssetRoutesTest {
                 setBody("""{"documentIds":["doc-1","doc-2"]}""")
             }
 
-        assertEquals(HttpStatusCode.OK, patch.status)
-        assertEquals(
-            "[\"doc-1\",\"doc-2\"]",
-            json.parseToJsonElement(patch.bodyAsText()).jsonObject["documentIds"].toString(),
-        )
+        assertEquals(HttpStatusCode.BadRequest, patch.status)
+        assertTrue(patch.bodyAsText().contains("at most one document"))
+    }
+
+    @Test
+    fun createAssetRejectsMultipleDocumentIds() = testApplication {
+        application { module() }
+        client.ensureSite("org-1")
+        val create =
+            client.post("/assets") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody("""{"name":"Компрессор","siteId":"site-1","documentIds":["doc-1","doc-2"]}""")
+            }
+        assertEquals(HttpStatusCode.BadRequest, create.status)
+        assertTrue(create.bodyAsText().contains("at most one document"))
     }
 
     @Test
@@ -276,7 +314,7 @@ class AssetRoutesTest {
                 header("X-Org-Id", "org-1")
                 contentType(ContentType.Application.Json)
                 setBody(
-                    """{"name":"Компрессор","siteId":"site-1","documentIds":["doc-1","doc-2","doc-3"]}""",
+                    """{"name":"Компрессор","siteId":"site-1","documentIds":["doc-1"]}""",
                 )
             }
         val id = json.parseToJsonElement(create.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
@@ -285,14 +323,14 @@ class AssetRoutesTest {
             client.post("/assets/$id/unlink-documents") {
                 header("X-Org-Id", "org-1")
                 contentType(ContentType.Application.Json)
-                setBody("""{"documentIds":["doc-1","doc-3"]}""")
+                setBody("""{"documentIds":["doc-1"]}""")
             }
         assertEquals(HttpStatusCode.OK, unlinked.status)
         val body = json.parseToJsonElement(unlinked.bodyAsText()).jsonObject
-        assertEquals("[\"doc-2\"]", body["documentIds"].toString())
+        val docs = body["documentIds"]
+        assertTrue(docs == null || docs.toString() == "[]")
 
         val get = client.get("/assets/$id") { header("X-Org-Id", "org-1") }
-        assertTrue(get.bodyAsText().contains("doc-2"))
         assertTrue(!get.bodyAsText().contains("doc-1"))
     }
 

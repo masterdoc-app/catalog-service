@@ -280,6 +280,7 @@ class AssetStore {
     fun create(orgId: String, req: CreateAssetRequest): Asset {
         require(req.name.isNotBlank()) { "name required" }
         require(req.siteId.isNotBlank()) { "siteId required" }
+        require(req.documentIds.size <= 1) { "at most one document" }
         val status = if (req.asDraft || req.source == RecordSource.ai_generated) RecordStatus.draft else RecordStatus.active
         val forcedSource = if (req.source == RecordSource.ai_generated) RecordSource.ai_generated else req.source
         val asset =
@@ -293,7 +294,7 @@ class AssetStore {
                 description = req.description?.trim()?.takeIf { it.isNotEmpty() },
                 status = if (forcedSource == RecordSource.ai_generated) RecordStatus.draft else status,
                 source = forcedSource,
-                documentIds = req.documentIds,
+                documentIds = req.documentIds.distinct().take(1),
             )
         byId[asset.id] = asset
         return asset
@@ -312,6 +313,7 @@ class AssetStore {
 
     fun update(orgId: String, id: String, req: UpdateAssetRequest): Asset {
         val asset = get(orgId, id)
+        req.documentIds?.let { require(it.size <= 1) { "at most one document" } }
         val updated =
             asset.copy(
                 name = req.name?.trim()?.takeIf { it.isNotEmpty() } ?: asset.name,
@@ -320,7 +322,7 @@ class AssetStore {
                 description = req.description.patchNullable(asset.description),
                 documentIds =
                     req.documentIds?.let { documentIds ->
-                        (asset.documentIds + documentIds).distinct()
+                        documentIds.distinct().take(1)
                     } ?: asset.documentIds,
             )
         byId[id] = updated
