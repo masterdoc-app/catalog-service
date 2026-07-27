@@ -137,6 +137,11 @@ fun Application.module(
             assets.reject(orgId, call.parameters["id"]!!)
             call.respond(HttpStatusCode.NoContent)
         }
+        delete("/assets/{id}") {
+            val orgId = call.orgId()
+            assets.delete(orgId, call.parameters["id"]!!)
+            call.respond(HttpStatusCode.NoContent)
+        }
         post("/assets/{id}/unlink-documents") {
             val orgId = call.orgId()
             val req = call.receive<UnlinkDocumentsRequest>()
@@ -281,6 +286,7 @@ class AssetStore {
         require(req.name.isNotBlank()) { "name required" }
         require(req.siteId.isNotBlank()) { "siteId required" }
         require(req.documentIds.size <= 1) { "at most one document" }
+        requireDocumentsAvailable(orgId, req.documentIds, exceptAssetId = null)
         val status = if (req.asDraft || req.source == RecordSource.ai_generated) RecordStatus.draft else RecordStatus.active
         val forcedSource = if (req.source == RecordSource.ai_generated) RecordSource.ai_generated else req.source
         val asset =
@@ -314,6 +320,7 @@ class AssetStore {
     fun update(orgId: String, id: String, req: UpdateAssetRequest): Asset {
         val asset = get(orgId, id)
         req.documentIds?.let { require(it.size <= 1) { "at most one document" } }
+        req.documentIds?.let { requireDocumentsAvailable(orgId, it, exceptAssetId = id) }
         val updated =
             asset.copy(
                 name = req.name?.trim()?.takeIf { it.isNotEmpty() } ?: asset.name,
@@ -349,6 +356,25 @@ class AssetStore {
         val asset = get(orgId, id)
         if (asset.status != RecordStatus.draft) throw IllegalArgumentException("Only draft assets can be rejected")
         byId.remove(id)
+    }
+
+    fun delete(orgId: String, id: String) {
+        get(orgId, id)
+        byId.remove(id)
+    }
+
+    fun findByDocumentId(orgId: String, documentId: String, exceptAssetId: String? = null): Asset? =
+        byId.values.firstOrNull { asset ->
+            asset.orgId == orgId &&
+                asset.id != exceptAssetId &&
+                documentId in asset.documentIds
+        }
+
+    private fun requireDocumentsAvailable(orgId: String, documentIds: List<String>, exceptAssetId: String?) {
+        documentIds.forEach { docId ->
+            val owner = findByDocumentId(orgId, docId, exceptAssetId)
+            require(owner == null) { "document already bound to equipment" }
+        }
     }
 
     fun countOnSite(orgId: String, siteId: String): Int =

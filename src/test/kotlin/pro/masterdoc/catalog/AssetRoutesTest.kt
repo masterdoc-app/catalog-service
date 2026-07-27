@@ -1,5 +1,6 @@
 package pro.masterdoc.catalog
 
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.patch
@@ -126,6 +127,70 @@ class AssetRoutesTest {
 
         val reject = client.post("/assets/$id/reject") { header("X-Org-Id", "org-1") }
         assertEquals(HttpStatusCode.BadRequest, reject.status)
+    }
+
+    @Test
+    fun deleteActiveAssetSucceeds() = testApplication {
+        application { module() }
+        client.ensureSite("org-1", "s")
+        val create =
+            client.post("/assets") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody("""{"name":"Active","siteId":"s","source":"manual","asDraft":false,"documentIds":["doc-1"]}""")
+            }
+        val id = json.parseToJsonElement(create.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+
+        val delete = client.delete("/assets/$id") { header("X-Org-Id", "org-1") }
+        assertEquals(HttpStatusCode.NoContent, delete.status)
+
+        val get = client.get("/assets/$id") { header("X-Org-Id", "org-1") }
+        assertEquals(HttpStatusCode.NotFound, get.status)
+    }
+
+    @Test
+    fun createRejectsDocumentAlreadyBoundToOtherAsset() = testApplication {
+        application { module() }
+        client.ensureSite("org-1")
+        client.post("/assets") {
+            header("X-Org-Id", "org-1")
+            contentType(ContentType.Application.Json)
+            setBody("""{"name":"First","siteId":"site-1","documentIds":["doc-shared"]}""")
+        }
+        val second =
+            client.post("/assets") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody("""{"name":"Second","siteId":"site-1","documentIds":["doc-shared"]}""")
+            }
+        assertEquals(HttpStatusCode.BadRequest, second.status)
+        assertTrue(second.bodyAsText().contains("document already bound"))
+    }
+
+    @Test
+    fun patchRejectsDocumentAlreadyBoundToOtherAsset() = testApplication {
+        application { module() }
+        client.ensureSite("org-1")
+        client.post("/assets") {
+            header("X-Org-Id", "org-1")
+            contentType(ContentType.Application.Json)
+            setBody("""{"name":"First","siteId":"site-1","documentIds":["doc-shared"]}""")
+        }
+        val create =
+            client.post("/assets") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody("""{"name":"Second","siteId":"site-1"}""")
+            }
+        val id = json.parseToJsonElement(create.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+        val patch =
+            client.patch("/assets/$id") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody("""{"documentIds":["doc-shared"]}""")
+            }
+        assertEquals(HttpStatusCode.BadRequest, patch.status)
+        assertTrue(patch.bodyAsText().contains("document already bound"))
     }
 
     @Test
