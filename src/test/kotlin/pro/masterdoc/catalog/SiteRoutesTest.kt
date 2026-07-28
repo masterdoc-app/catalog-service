@@ -15,6 +15,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -70,6 +71,57 @@ class SiteRoutesTest {
         }
         val delete = client.delete("/sites/s1") { header("X-Org-Id", "org-1") }
         assertEquals(HttpStatusCode.Conflict, delete.status)
+    }
+
+    @Test
+    fun emptyOrgListSeedsDefaultCeh1() = testApplication {
+        application { module() }
+        val list = client.get("/sites") { header("X-Org-Id", "org-empty") }
+        assertEquals(HttpStatusCode.OK, list.status)
+        val items = json.parseToJsonElement(list.bodyAsText()).jsonObject["items"]!!.jsonArray
+        assertEquals(1, items.size)
+        val site = items[0].jsonObject
+        assertEquals("ceh-1", site["id"]!!.jsonPrimitive.content)
+        assertEquals("Цех 1", site["name"]!!.jsonPrimitive.content)
+        assertEquals("org-empty", site["orgId"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun secondListDoesNotDuplicateDefault() = testApplication {
+        application { module() }
+        repeat(2) {
+            client.get("/sites") { header("X-Org-Id", "org-once") }
+        }
+        val list = client.get("/sites") { header("X-Org-Id", "org-once") }
+        val items = json.parseToJsonElement(list.bodyAsText()).jsonObject["items"]!!.jsonArray
+        assertEquals(1, items.size)
+        assertEquals("ceh-1", items[0].jsonObject["id"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun existingSiteSkipsSeed() = testApplication {
+        application { module() }
+        client.post("/sites") {
+            header("X-Org-Id", "org-has")
+            contentType(ContentType.Application.Json)
+            setBody("""{"id":"s-custom","name":"Свой цех"}""")
+        }
+        val list = client.get("/sites") { header("X-Org-Id", "org-has") }
+        val items = json.parseToJsonElement(list.bodyAsText()).jsonObject["items"]!!.jsonArray
+        assertEquals(1, items.size)
+        assertEquals("s-custom", items[0].jsonObject["id"]!!.jsonPrimitive.content)
+        assertTrue(!list.bodyAsText().contains("ceh-1"))
+    }
+
+    @Test
+    fun afterDeleteAllListReseedsDefault() = testApplication {
+        application { module() }
+        client.get("/sites") { header("X-Org-Id", "org-reseed") }
+        client.delete("/sites/ceh-1") { header("X-Org-Id", "org-reseed") }
+        val list = client.get("/sites") { header("X-Org-Id", "org-reseed") }
+        val items = json.parseToJsonElement(list.bodyAsText()).jsonObject["items"]!!.jsonArray
+        assertEquals(1, items.size)
+        assertEquals("ceh-1", items[0].jsonObject["id"]!!.jsonPrimitive.content)
     }
 
     @Test

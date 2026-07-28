@@ -73,7 +73,7 @@ fun Application.module(
         }
         get("/sites") {
             val orgId = call.orgId()
-            call.respond(SiteList(items = sites.list(orgId)))
+            call.respond(SiteList(items = sites.ensureDefaultIfEmpty(orgId)))
         }
         get("/sites/{id}") {
             val orgId = call.orgId()
@@ -349,6 +349,16 @@ class SiteStore {
     }
 
     fun list(orgId: String): List<Site> = byKey.values.filter { it.orgId == orgId }.sortedBy { it.name }
+
+    fun ensureDefaultIfEmpty(orgId: String): List<Site> {
+        if (list(orgId).isNotEmpty()) return list(orgId)
+        try {
+            create(orgId, CreateSiteRequest(id = "ceh-1", name = "Цех 1", address = null))
+        } catch (_: IllegalArgumentException) {
+            // concurrent create with same id — treat as already seeded
+        }
+        return list(orgId)
+    }
 
     fun get(orgId: String, id: String): Site =
         byKey[key(orgId, id)] ?: throw NoSuchElementException("Site not found")
