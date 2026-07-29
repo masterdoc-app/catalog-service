@@ -393,6 +393,7 @@ class AssetStore {
     fun create(orgId: String, req: CreateAssetRequest): Asset {
         require(req.name.isNotBlank()) { "name required" }
         require(req.siteId.isNotBlank()) { "siteId required" }
+        // TODO(multi-doc): lift «at most one document» once equipment supports many manuals
         require(req.documentIds.size <= 1) { "at most one document" }
         requireDocumentsAvailable(orgId, req.documentIds, exceptAssetId = null)
         val status = if (req.asDraft || req.source == RecordSource.ai_generated) RecordStatus.draft else RecordStatus.active
@@ -427,6 +428,7 @@ class AssetStore {
 
     fun update(orgId: String, id: String, req: UpdateAssetRequest): Asset {
         val asset = get(orgId, id)
+        // TODO(multi-doc): lift «at most one document» once equipment supports many manuals
         req.documentIds?.let { require(it.size <= 1) { "at most one document" } }
         req.documentIds?.let { requireDocumentsAvailable(orgId, it, exceptAssetId = id) }
         val updated =
