@@ -207,12 +207,18 @@ data class Site(
     val orgId: String,
     val name: String,
     val address: String? = null,
+    val lat: Double? = null,
+    val lon: Double? = null,
+    val geofenceRadiusM: Int? = null,
 )
 
 @Serializable
 data class CreateSiteRequest(
     val name: String,
     val address: String? = null,
+    val lat: Double? = null,
+    val lon: Double? = null,
+    val geofenceRadiusM: Int? = null,
     val id: String? = null,
 )
 
@@ -220,6 +226,9 @@ data class CreateSiteRequest(
 data class UpdateSiteRequest(
     val name: String? = null,
     val address: String? = null,
+    val lat: Double? = null,
+    val lon: Double? = null,
+    val geofenceRadiusM: Int? = null,
 )
 
 @Serializable
@@ -334,6 +343,7 @@ class SiteStore {
 
     fun create(orgId: String, req: CreateSiteRequest): Site {
         require(req.name.isNotBlank()) { "name required" }
+        validateGeofence(req.lat, req.lon, req.geofenceRadiusM)
         val id = req.id?.trim()?.takeIf { it.isNotEmpty() } ?: UUID.randomUUID().toString()
         val k = key(orgId, id)
         require(byKey[k] == null) { "site id already exists" }
@@ -343,6 +353,9 @@ class SiteStore {
                 orgId = orgId,
                 name = req.name.trim(),
                 address = req.address?.trim()?.takeIf { it.isNotEmpty() },
+                lat = req.lat,
+                lon = req.lon,
+                geofenceRadiusM = req.geofenceRadiusM,
             )
         byKey[k] = site
         return site
@@ -365,6 +378,7 @@ class SiteStore {
 
     fun update(orgId: String, id: String, req: UpdateSiteRequest): Site {
         val current = get(orgId, id)
+        validateGeofence(req.lat, req.lon, req.geofenceRadiusM)
         val updated =
             current.copy(
                 name = req.name?.trim()?.takeIf { it.isNotEmpty() } ?: current.name,
@@ -374,6 +388,9 @@ class SiteStore {
                         req.address.isBlank() -> null
                         else -> req.address.trim()
                     },
+                lat = req.lat ?: current.lat,
+                lon = req.lon ?: current.lon,
+                geofenceRadiusM = req.geofenceRadiusM ?: current.geofenceRadiusM,
             )
         byKey[key(orgId, id)] = updated
         return updated
@@ -385,6 +402,12 @@ class SiteStore {
     }
 
     fun exists(orgId: String, id: String): Boolean = byKey.containsKey(key(orgId, id))
+
+    private fun validateGeofence(lat: Double?, lon: Double?, geofenceRadiusM: Int?) {
+        lat?.let { require(it in -90.0..90.0) { "lat must be between -90 and 90" } }
+        lon?.let { require(it in -180.0..180.0) { "lon must be between -180 and 180" } }
+        geofenceRadiusM?.let { require(it > 0) { "geofenceRadiusM must be greater than 0" } }
+    }
 }
 
 class AssetStore {

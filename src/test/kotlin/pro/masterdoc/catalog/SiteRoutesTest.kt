@@ -57,6 +57,68 @@ class SiteRoutesTest {
     }
 
     @Test
+    fun createSiteWithGeofenceReturnsItOnGet() = testApplication {
+        application { module() }
+        val create =
+            client.post("/sites") {
+                header("X-Org-Id", "org-geofence")
+                contentType(ContentType.Application.Json)
+                setBody("""{"id":"site-geofence","name":"Geofenced","lat":55.75,"lon":37.61,"geofenceRadiusM":250}""")
+            }
+        assertEquals(HttpStatusCode.Created, create.status)
+
+        val get = client.get("/sites/site-geofence") { header("X-Org-Id", "org-geofence") }
+        assertEquals(HttpStatusCode.OK, get.status)
+        val site = json.parseToJsonElement(get.bodyAsText()).jsonObject
+        assertEquals("55.75", site["lat"]!!.jsonPrimitive.content)
+        assertEquals("37.61", site["lon"]!!.jsonPrimitive.content)
+        assertEquals("250", site["geofenceRadiusM"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun invalidGeofenceValuesReturnBadRequest() = testApplication {
+        application { module() }
+        val invalidRequests =
+            listOf(
+                """{"id":"invalid-lat","name":"Invalid lat","lat":90.1}""",
+                """{"id":"invalid-lon","name":"Invalid lon","lon":180.1}""",
+                """{"id":"invalid-radius","name":"Invalid radius","geofenceRadiusM":0}""",
+            )
+
+        invalidRequests.forEach { body ->
+            val response =
+                client.post("/sites") {
+                    header("X-Org-Id", "org-invalid-geofence")
+                    contentType(ContentType.Application.Json)
+                    setBody(body)
+                }
+            assertEquals(HttpStatusCode.BadRequest, response.status)
+        }
+    }
+
+    @Test
+    fun updateSiteChangesGeofenceFields() = testApplication {
+        application { module() }
+        client.post("/sites") {
+            header("X-Org-Id", "org-update-geofence")
+            contentType(ContentType.Application.Json)
+            setBody("""{"id":"site-update","name":"Site","lat":55.0,"lon":37.0,"geofenceRadiusM":100}""")
+        }
+
+        val update =
+            client.patch("/sites/site-update") {
+                header("X-Org-Id", "org-update-geofence")
+                contentType(ContentType.Application.Json)
+                setBody("""{"lat":56.0,"lon":38.0,"geofenceRadiusM":300}""")
+            }
+        assertEquals(HttpStatusCode.OK, update.status)
+        val site = json.parseToJsonElement(update.bodyAsText()).jsonObject
+        assertEquals("56.0", site["lat"]!!.jsonPrimitive.content)
+        assertEquals("38.0", site["lon"]!!.jsonPrimitive.content)
+        assertEquals("300", site["geofenceRadiusM"]!!.jsonPrimitive.content)
+    }
+
+    @Test
     fun deleteBlockedWhenAssetsPresent() = testApplication {
         application { module() }
         client.post("/sites") {
