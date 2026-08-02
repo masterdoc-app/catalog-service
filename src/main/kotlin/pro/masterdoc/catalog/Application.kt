@@ -242,6 +242,7 @@ data class Asset(
     val status: RecordStatus,
     val source: RecordSource,
     val documentIds: List<String> = emptyList(),
+    val qrToken: String? = null,
 )
 
 @Serializable

@@ -4,12 +4,19 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import org.postgresql.util.PGobject
+import java.security.SecureRandom
+import java.util.Base64
 import java.util.UUID
 import javax.sql.DataSource
 
 private val jdbcJson = Json
 
 class JdbcAssetStore(private val dataSource: DataSource) {
+    companion object {
+        private val secureRandom = SecureRandom()
+        private val tokenEncoder = Base64.getUrlEncoder().withoutPadding()
+    }
+
     fun create(orgId: String, req: CreateAssetRequest): Asset {
         require(req.name.isNotBlank()) { "name required" }
         require(req.siteId.isNotBlank()) { "siteId required" }
@@ -153,6 +160,35 @@ class JdbcAssetStore(private val dataSource: DataSource) {
         return asset.copy(documentIds = asset.documentIds.filter { it !in documentIds.toSet() }).also(::save)
     }
 
+    /**
+     * Rotates the QR token for an active asset.
+     *
+     * Draft assets are rejected with [IllegalArgumentException]; the HTTP layer maps that
+     * store-level decision to its public status code.
+     */
+    fun rotateQrToken(orgId: String, id: String): Asset {
+        val asset = get(orgId, id)
+        require(asset.status == RecordStatus.active) { "Only active assets can have QR tokens" }
+        val tokenBytes = ByteArray(18).also(secureRandom::nextBytes)
+        return asset.copy(qrToken = tokenEncoder.encodeToString(tokenBytes)).also(::save)
+    }
+
+    fun findActiveByQrToken(orgId: String, token: String): Asset? {
+        if (token.isBlank()) return null
+        return dataSource.connection.use { c ->
+            c.prepareStatement(
+                "SELECT * FROM assets WHERE org_id = ? AND qr_token = ? AND status = ?",
+            ).use { s ->
+                s.setString(1, orgId)
+                s.setString(2, token)
+                s.setString(3, RecordStatus.active.name)
+                s.executeQuery().use { rs ->
+                    if (rs.next()) rs.toAsset() else null
+                }
+            }
+        }
+    }
+
     fun exists(orgId: String, id: String): Boolean = runCatching { get(orgId, id) }.isSuccess
 
     private fun requireDocumentsAvailable(orgId: String, documentIds: List<String>, exceptAssetId: String?) {
@@ -166,7 +202,7 @@ class JdbcAssetStore(private val dataSource: DataSource) {
     private fun save(asset: Asset) {
         dataSource.connection.use { c ->
             c.prepareStatement(
-                "UPDATE assets SET site_id = ?, name = ?, inventory_no = ?, category = ?, description = ?, status = ?, source = ?, document_ids = ? WHERE org_id = ? AND id = ?",
+                "UPDATE assets SET site_id = ?, name = ?, inventory_no = ?, category = ?, description = ?, status = ?, source = ?, document_ids = ?, qr_token = ? WHERE org_id = ? AND id = ?",
             ).use { s ->
                 s.setString(1, asset.siteId)
                 s.setString(2, asset.name)
@@ -176,8 +212,9 @@ class JdbcAssetStore(private val dataSource: DataSource) {
                 s.setString(6, asset.status.name)
                 s.setString(7, asset.source.name)
                 s.setJson(8, asset.documentIds)
-                s.setString(9, asset.orgId)
-                s.setString(10, asset.id)
+                s.setString(9, asset.qrToken)
+                s.setString(10, asset.orgId)
+                s.setString(11, asset.id)
                 s.executeUpdate()
             }
         }
@@ -201,6 +238,7 @@ class JdbcAssetStore(private val dataSource: DataSource) {
         status = RecordStatus.valueOf(getString("status")),
         source = RecordSource.valueOf(getString("source")),
         documentIds = jdbcJson.decodeFromString(getString("document_ids")),
+        qrToken = getString("qr_token"),
     )
 }
 
