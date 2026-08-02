@@ -50,12 +50,15 @@ class JdbcAssetStore(private val dataSource: DataSource) {
 
     fun list(orgId: String, siteId: String? = null): List<Asset> =
         dataSource.connection.use { c ->
-            c.prepareStatement(
-                "SELECT * FROM assets WHERE org_id = ? AND (? IS NULL OR site_id = ?) ORDER BY name",
-            ).use { s ->
+            val sql =
+                if (siteId == null) {
+                    "SELECT * FROM assets WHERE org_id = ? ORDER BY name"
+                } else {
+                    "SELECT * FROM assets WHERE org_id = ? AND site_id = ? ORDER BY name"
+                }
+            c.prepareStatement(sql).use { s ->
                 s.setString(1, orgId)
-                s.setString(2, siteId)
-                s.setString(3, siteId)
+                if (siteId != null) s.setString(2, siteId)
                 s.executeQuery().use { rs ->
                     buildList {
                         while (rs.next()) add(rs.toAsset())
