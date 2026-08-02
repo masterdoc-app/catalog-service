@@ -27,6 +27,7 @@ import org.slf4j.event.Level
 import javax.sql.DataSource
 
 private val log = LoggerFactory.getLogger("pro.masterdoc.catalog")
+private const val ASSET_QR_BASE_URL = "https://app.fixaverse.ru/#/qr/"
 
 fun main() {
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8091
@@ -116,6 +117,22 @@ fun Application.module(dataSource: DataSource) {
                 }
             call.respond(AssetList(items = items))
         }
+        get("/assets/by-qr/{token}") {
+            val orgId = call.orgId()
+            val asset = assets.findActiveByQrToken(orgId, call.parameters["token"]!!)
+                ?: throw NoSuchElementException("Asset not found")
+            if (call.scopeFilterEnabled() && !scopes.covers(orgId, call.userId(), asset)) {
+                throw NoSuchElementException("Asset not found")
+            }
+            call.respond(
+                AssetQrResolveResponse(
+                    assetId = asset.id,
+                    name = asset.name,
+                    siteId = asset.siteId,
+                    siteName = sites.get(orgId, asset.siteId).name,
+                ),
+            )
+        }
         get("/assets/{id}") {
             val orgId = call.orgId()
             call.respond(assets.get(orgId, call.parameters["id"]!!))
@@ -136,6 +153,18 @@ fun Application.module(dataSource: DataSource) {
         post("/assets/{id}/confirm") {
             val orgId = call.orgId()
             call.respond(assets.confirm(orgId, call.parameters["id"]!!))
+        }
+        post("/assets/{id}/qr") {
+            val orgId = call.orgId()
+            val asset = assets.rotateQrToken(orgId, call.parameters["id"]!!)
+            val qrToken = requireNotNull(asset.qrToken)
+            call.respond(
+                AssetQrResponse(
+                    qrToken = qrToken,
+                    qrUrl = "$ASSET_QR_BASE_URL$qrToken",
+                    asset = asset,
+                ),
+            )
         }
         post("/assets/{id}/reject") {
             val orgId = call.orgId()
@@ -274,6 +303,21 @@ data class UnlinkDocumentsRequest(val documentIds: List<String>)
 
 @Serializable
 data class AssetList(val items: List<Asset>)
+
+@Serializable
+data class AssetQrResponse(
+    val qrToken: String,
+    val qrUrl: String,
+    val asset: Asset,
+)
+
+@Serializable
+data class AssetQrResolveResponse(
+    val assetId: String,
+    val name: String,
+    val siteId: String,
+    val siteName: String? = null,
+)
 
 @Serializable
 data class UserScope(
