@@ -31,7 +31,6 @@ class SiteRoutesTest {
 
     @Test
     fun createListUpdateDelete() = withApplication {
-        application { module(dataSource) }
         val create =
             client.post("/sites") {
                 header("X-Org-Id", "org-1")
@@ -65,7 +64,6 @@ class SiteRoutesTest {
 
     @Test
     fun createSiteWithGeofenceReturnsItOnGet() = withApplication {
-        application { module(dataSource) }
         val create =
             client.post("/sites") {
                 header("X-Org-Id", "org-geofence")
@@ -84,7 +82,6 @@ class SiteRoutesTest {
 
     @Test
     fun invalidGeofenceValuesReturnBadRequest() = withApplication {
-        application { module(dataSource) }
         val invalidRequests =
             listOf(
                 """{"id":"invalid-lat","name":"Invalid lat","lat":90.1}""",
@@ -105,7 +102,6 @@ class SiteRoutesTest {
 
     @Test
     fun updateSiteChangesGeofenceFields() = withApplication {
-        application { module(dataSource) }
         client.post("/sites") {
             header("X-Org-Id", "org-update-geofence")
             contentType(ContentType.Application.Json)
@@ -127,7 +123,6 @@ class SiteRoutesTest {
 
     @Test
     fun deleteBlockedWhenAssetsPresent() = withApplication {
-        application { module(dataSource) }
         client.post("/sites") {
             header("X-Org-Id", "org-1")
             contentType(ContentType.Application.Json)
@@ -144,7 +139,6 @@ class SiteRoutesTest {
 
     @Test
     fun emptyOrgListSeedsDefaultCeh1() = withApplication {
-        application { module(dataSource) }
         val list = client.get("/sites") { header("X-Org-Id", "org-empty") }
         assertEquals(HttpStatusCode.OK, list.status)
         val items = json.parseToJsonElement(list.bodyAsText()).jsonObject["items"]!!.jsonArray
@@ -157,7 +151,6 @@ class SiteRoutesTest {
 
     @Test
     fun secondListDoesNotDuplicateDefault() = withApplication {
-        application { module(dataSource) }
         repeat(2) {
             client.get("/sites") { header("X-Org-Id", "org-once") }
         }
@@ -169,7 +162,6 @@ class SiteRoutesTest {
 
     @Test
     fun existingSiteSkipsSeed() = withApplication {
-        application { module(dataSource) }
         client.post("/sites") {
             header("X-Org-Id", "org-has")
             contentType(ContentType.Application.Json)
@@ -184,7 +176,6 @@ class SiteRoutesTest {
 
     @Test
     fun afterDeleteAllListReseedsDefault() = withApplication {
-        application { module(dataSource) }
         client.get("/sites") { header("X-Org-Id", "org-reseed") }
         client.delete("/sites/ceh-1") { header("X-Org-Id", "org-reseed") }
         val list = client.get("/sites") { header("X-Org-Id", "org-reseed") }
@@ -195,7 +186,6 @@ class SiteRoutesTest {
 
     @Test
     fun sitesScopedByOrg() = withApplication {
-        application { module(dataSource) }
         client.post("/sites") {
             header("X-Org-Id", "org-a")
             contentType(ContentType.Application.Json)
@@ -219,8 +209,7 @@ class SiteRoutesTest {
                 }
             }
             testApplication {
-                application { module(dataSource) }
-                block()
+                        block()
             }
         }
     }

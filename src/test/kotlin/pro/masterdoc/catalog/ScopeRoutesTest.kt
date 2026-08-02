@@ -57,7 +57,6 @@ class ScopeRoutesTest {
 
     @Test
     fun putGetScopeRoundTrip() = withApplication {
-        application { module(dataSource) }
         val put =
             client.put("/user-scopes/user-1") {
                 header("X-Org-Id", "org-1")
@@ -79,7 +78,6 @@ class ScopeRoutesTest {
 
     @Test
     fun getEmptyScopeReturnsDefaults() = withApplication {
-        application { module(dataSource) }
         val get = client.get("/user-scopes/unknown-user") { header("X-Org-Id", "org-1") }
         assertEquals(HttpStatusCode.OK, get.status)
         val body = json.parseToJsonElement(get.bodyAsText()).jsonObject
@@ -90,7 +88,6 @@ class ScopeRoutesTest {
 
     @Test
     fun scopesScopedByOrg() = withApplication {
-        application { module(dataSource) }
         client.put("/user-scopes/user-1") {
             header("X-Org-Id", "org-a")
             contentType(ContentType.Application.Json)
@@ -113,7 +110,6 @@ class ScopeRoutesTest {
 
     @Test
     fun coversTrueViaSiteMembership() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         val assetId = client.createAsset("org-1", "s1")
         client.put("/user-scopes/engineer-1") {
@@ -132,7 +128,6 @@ class ScopeRoutesTest {
 
     @Test
     fun coversTrueViaPin() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         client.ensureSite("org-1", "s2")
         val assetId = client.createAsset("org-1", "s2", "Pinned")
@@ -152,7 +147,6 @@ class ScopeRoutesTest {
 
     @Test
     fun coversFalseWhenNeitherSiteNorPin() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         client.ensureSite("org-1", "s2")
         val assetId = client.createAsset("org-1", "s2")
@@ -172,7 +166,6 @@ class ScopeRoutesTest {
 
     @Test
     fun coversFalseForEmptyScope() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         val assetId = client.createAsset("org-1", "s1")
 
@@ -186,7 +179,6 @@ class ScopeRoutesTest {
 
     @Test
     fun pinSurvivesAssetMove() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         client.ensureSite("org-1", "s2")
         val assetId = client.createAsset("org-1", "s1", "Movable")
@@ -212,7 +204,6 @@ class ScopeRoutesTest {
 
     @Test
     fun coversNotFoundForUnknownAsset() = withApplication {
-        application { module(dataSource) }
         client.put("/user-scopes/engineer-1") {
             header("X-Org-Id", "org-1")
             contentType(ContentType.Application.Json)
@@ -227,7 +218,6 @@ class ScopeRoutesTest {
 
     @Test
     fun candidatesListsUsersCoveringAsset() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         val assetId = client.createAsset("org-1", "s1")
         client.put("/user-scopes/e1") {
@@ -259,7 +249,6 @@ class ScopeRoutesTest {
 
     @Test
     fun candidatesScopedByOrg() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-a", "s1")
         client.ensureSite("org-b", "s1")
         val assetA = client.createAsset("org-a", "s1")
@@ -302,8 +291,7 @@ class ScopeRoutesTest {
                 }
             }
             testApplication {
-                application { module(dataSource) }
-                block()
+                        block()
             }
         }
     }

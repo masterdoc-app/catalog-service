@@ -60,7 +60,6 @@ class ScopeFilterAssetsTest {
 
     @Test
     fun ae1EmptyScopeWithFilterReturnsEmptyList() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         client.createAsset("org-1", "s1", "VisibleToAdmin")
 
@@ -76,7 +75,6 @@ class ScopeFilterAssetsTest {
 
     @Test
     fun ae1MissingUserIdWithFilterTreatsAsEmptyScope() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         client.createAsset("org-1", "s1")
 
@@ -91,7 +89,6 @@ class ScopeFilterAssetsTest {
 
     @Test
     fun ae2BoundSiteShowsAssetsAtSite() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         client.put("/user-scopes/engineer-1") {
             header("X-Org-Id", "org-1")
@@ -114,7 +111,6 @@ class ScopeFilterAssetsTest {
 
     @Test
     fun ae3PinOnlyShowsPinnedAssetNotSiblings() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         val pinnedId = client.createAsset("org-1", "s1", "Pinned")
         client.createAsset("org-1", "s1", "Sibling")
@@ -136,7 +132,6 @@ class ScopeFilterAssetsTest {
 
     @Test
     fun ae5PinSurvivesAssetMoveInFilteredList() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         client.ensureSite("org-1", "s2")
         val assetId = client.createAsset("org-1", "s1", "Movable")
@@ -163,7 +158,6 @@ class ScopeFilterAssetsTest {
 
     @Test
     fun filterOffOrAbsentReturnsFullOrgList() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         client.createAsset("org-1", "s1", "A")
         client.createAsset("org-1", "s1", "B")
@@ -186,7 +180,6 @@ class ScopeFilterAssetsTest {
 
     @Test
     fun scopeFilterTrueHeaderWorks() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         val assetId = client.createAsset("org-1", "s1", "Pinned")
         client.put("/user-scopes/engineer-1") {
@@ -206,7 +199,6 @@ class ScopeFilterAssetsTest {
 
     @Test
     fun siteIdQueryIntersectsWithScopeFilter() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         client.ensureSite("org-1", "s2")
         client.createAsset("org-1", "s1", "AtS1")
@@ -228,7 +220,6 @@ class ScopeFilterAssetsTest {
 
     @Test
     fun orgIsolationWithScopeFilter() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-a", "s1")
         client.ensureSite("org-b", "s1")
         client.createAsset("org-a", "s1", "OrgA")
@@ -251,7 +242,6 @@ class ScopeFilterAssetsTest {
 
     @Test
     fun getByIdUnchangedWithoutScopeFilter() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         val assetId = client.createAsset("org-1", "s1", "Direct")
 
@@ -273,8 +263,7 @@ class ScopeFilterAssetsTest {
                 }
             }
             testApplication {
-                application { module(dataSource) }
-                block()
+                        block()
             }
         }
     }

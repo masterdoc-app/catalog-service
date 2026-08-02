@@ -42,7 +42,6 @@ class AssetRoutesTest {
 
     @Test
     fun createDraftAndConfirm() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1")
         val create =
             client.post("/assets") {
@@ -68,7 +67,6 @@ class AssetRoutesTest {
 
     @Test
     fun confirmNonDraftFails() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "s")
         val create =
             client.post("/assets") {
@@ -83,7 +81,6 @@ class AssetRoutesTest {
 
     @Test
     fun listScopedByOrg() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-a", "s")
         client.ensureSite("org-b", "s")
         client.post("/assets") {
@@ -103,7 +100,6 @@ class AssetRoutesTest {
 
     @Test
     fun rejectDraftSucceeds() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "s")
         val create =
             client.post("/assets") {
@@ -122,7 +118,6 @@ class AssetRoutesTest {
 
     @Test
     fun rejectActiveFails() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "s")
         val create =
             client.post("/assets") {
@@ -138,7 +133,6 @@ class AssetRoutesTest {
 
     @Test
     fun deleteActiveAssetSucceeds() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "s")
         val create =
             client.post("/assets") {
@@ -157,7 +151,6 @@ class AssetRoutesTest {
 
     @Test
     fun createRejectsDocumentAlreadyBoundToOtherAsset() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1")
         client.post("/assets") {
             header("X-Org-Id", "org-1")
@@ -176,7 +169,6 @@ class AssetRoutesTest {
 
     @Test
     fun patchRejectsDocumentAlreadyBoundToOtherAsset() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1")
         client.post("/assets") {
             header("X-Org-Id", "org-1")
@@ -202,7 +194,6 @@ class AssetRoutesTest {
 
     @Test
     fun getOtherOrgAssetNotFound() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-a", "s")
         val create =
             client.post("/assets") {
@@ -218,7 +209,6 @@ class AssetRoutesTest {
 
     @Test
     fun aiGeneratedForcesDraftEvenWhenAsDraftFalse() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "s")
         val create =
             client.post("/assets") {
@@ -235,7 +225,6 @@ class AssetRoutesTest {
 
     @Test
     fun descriptionPersistedOnCreate() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1")
         val create =
             client.post("/assets") {
@@ -253,7 +242,6 @@ class AssetRoutesTest {
 
     @Test
     fun patchAssetUpdatesNameInventoryNoAndDescription() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1")
         val create =
             client.post("/assets") {
@@ -279,7 +267,6 @@ class AssetRoutesTest {
 
     @Test
     fun patchAssetReplacesDocumentIdsWithAtMostOne() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1")
         val create =
             client.post("/assets") {
@@ -305,7 +292,6 @@ class AssetRoutesTest {
 
     @Test
     fun patchAssetRejectsMultipleDocumentIds() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1")
         val create =
             client.post("/assets") {
@@ -328,7 +314,6 @@ class AssetRoutesTest {
 
     @Test
     fun createAssetRejectsMultipleDocumentIds() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1")
         val create =
             client.post("/assets") {
@@ -342,7 +327,6 @@ class AssetRoutesTest {
 
     @Test
     fun createWithUnknownSiteFails() = withApplication {
-        application { module(dataSource) }
         val create =
             client.post("/assets") {
                 header("X-Org-Id", "org-1")
@@ -355,7 +339,6 @@ class AssetRoutesTest {
 
     @Test
     fun moveAssetChangesSite() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1", "a", "A")
         client.ensureSite("org-1", "b", "B")
         val create =
@@ -379,7 +362,6 @@ class AssetRoutesTest {
 
     @Test
     fun unlinkDocumentsRemovesIds() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-1")
         val create =
             client.post("/assets") {
@@ -408,7 +390,6 @@ class AssetRoutesTest {
 
     @Test
     fun unlinkDocumentsOtherOrgNotFound() = withApplication {
-        application { module(dataSource) }
         client.ensureSite("org-a")
         val create =
             client.post("/assets") {
@@ -435,8 +416,7 @@ class AssetRoutesTest {
                 }
             }
             testApplication {
-                application { module(dataSource) }
-                block()
+                        block()
             }
         }
     }
