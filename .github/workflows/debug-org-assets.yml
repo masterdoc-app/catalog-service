@@ -1,0 +1,39 @@
+name: Debug Org Assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      org_id:
+        required: true
+        default: "382715225649971203"
+      user_id:
+        required: true
+        default: "382715229189963779"
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dump assets + scope for user
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          ORG_ID: ${{ inputs.org_id }}
+          USER_ID: ${{ inputs.user_id }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/deploy_key
+          printf '%s\n' "$KEY" > /tmp/deploy_key
+          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no "${USER}@${HOST}" bash -s <<EOF
+          set -euo pipefail
+          echo "== assets unfiltered =="
+          curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/assets | python3 -m json.tool | head -80
+          echo "== assets with scope filter like engineer =="
+          curl -sS -H "X-Org-Id: ${ORG_ID}" -H "X-User-Id: ${USER_ID}" -H "X-Scope-Filter: 1" \
+            http://127.0.0.1:8091/assets | python3 -m json.tool | head -80
+          echo "== user-scope =="
+          curl -sS -H "X-Org-Id: ${ORG_ID}" "http://127.0.0.1:8091/user-scopes/${USER_ID}" | python3 -m json.tool
+          echo "== sites =="
+          curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/sites | python3 -m json.tool | head -60
+          EOF
