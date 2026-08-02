@@ -34,4 +34,9 @@ kotlin { jvmToolchain(21) }
 
 application { mainClass.set("pro.masterdoc.catalog.ApplicationKt") }
 
-tasks.test { useJUnitPlatform() }
+tasks.test {
+    useJUnitPlatform()
+    testLogging {
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
+}
