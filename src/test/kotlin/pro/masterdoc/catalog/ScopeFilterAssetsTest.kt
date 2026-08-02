@@ -263,7 +263,8 @@ class ScopeFilterAssetsTest {
                 }
             }
             testApplication {
-                        block()
+                application { module(dataSource) }
+                block()
             }
         }
     }

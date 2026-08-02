@@ -291,7 +291,8 @@ class ScopeRoutesTest {
                 }
             }
             testApplication {
-                        block()
+                application { module(dataSource) }
+                block()
             }
         }
     }

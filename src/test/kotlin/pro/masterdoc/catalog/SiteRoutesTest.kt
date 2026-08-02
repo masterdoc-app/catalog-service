@@ -209,7 +209,8 @@ class SiteRoutesTest {
                 }
             }
             testApplication {
-                        block()
+                application { module(dataSource) }
+                block()
             }
         }
     }

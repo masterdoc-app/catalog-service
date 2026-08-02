@@ -416,7 +416,8 @@ class AssetRoutesTest {
                 }
             }
             testApplication {
-                        block()
+                application { module(dataSource) }
+                block()
             }
         }
     }
