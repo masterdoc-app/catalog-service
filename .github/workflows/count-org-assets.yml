@@ -1,0 +1,64 @@
+name: Count Org Assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      org_id:
+        description: X-Org-Id
+        required: true
+        default: "382715225649971203"
+      org_label:
+        description: Label for summary
+        required: false
+        default: Fixaverse Demo
+
+jobs:
+  count:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Count assets on VPS
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          ORG_ID: ${{ inputs.org_id }}
+          ORG_LABEL: ${{ inputs.org_label }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$USER" && test -n "$KEY"
+          install -m 600 /dev/null /tmp/deploy_key
+          printf '%s\n' "$KEY" > /tmp/deploy_key
+          OUT="$(ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no "${USER}@${HOST}" \
+            "curl -sS -H 'X-Org-Id: ${ORG_ID}' http://127.0.0.1:8091/assets")"
+          echo "$OUT" > /tmp/assets.json
+          python3 - <<'PY'
+          import json, os
+          data = json.load(open("/tmp/assets.json"))
+          items = data.get("items") or data if isinstance(data, list) else data.get("items") or []
+          if not isinstance(items, list):
+              items = []
+          active = [a for a in items if (a.get("status") or "") == "active"]
+          draft = [a for a in items if (a.get("status") or "") == "draft"]
+          print(f"ORG={os.environ.get('ORG_LABEL','')} id={os.environ['ORG_ID']}")
+          print(f"TOTAL={len(items)}")
+          print(f"ACTIVE={len(active)}")
+          print(f"DRAFT={len(draft)}")
+          for a in items[:50]:
+              print(f"- {a.get('status')}: {a.get('name')}")
+          if len(items) > 50:
+              print(f"... and {len(items)-50} more")
+          PY
+          {
+            echo "## Assets — ${ORG_LABEL}"
+            echo '```'
+            python3 - <<'PY'
+          import json, os
+          data = json.load(open("/tmp/assets.json"))
+          items = data.get("items") or []
+          active = sum(1 for a in items if a.get("status") == "active")
+          draft = sum(1 for a in items if a.get("status") == "draft")
+          print(f"org_id={os.environ['ORG_ID']}")
+          print(f"total={len(items)} active={active} draft={draft}")
+          PY
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
