@@ -11,6 +11,11 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
+import io.ktor.server.testing.ApplicationTestBuilder
+import com.zaxxer.hikari.HikariDataSource
+import org.testcontainers.containers.PostgreSQLContainer
+import org.testcontainers.junit.jupiter.Container
+import org.testcontainers.junit.jupiter.Testcontainers
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -18,8 +23,10 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
+@Testcontainers(disabledWithoutDocker = true)
 class AssetRoutesTest {
     private val json = Json { ignoreUnknownKeys = true }
+    private lateinit var dataSource: HikariDataSource
 
     private suspend fun io.ktor.client.HttpClient.ensureSite(
         orgId: String,
@@ -34,8 +41,8 @@ class AssetRoutesTest {
     }
 
     @Test
-    fun createDraftAndConfirm() = testApplication {
-        application { module() }
+    fun createDraftAndConfirm() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1")
         val create =
             client.post("/assets") {
@@ -60,8 +67,8 @@ class AssetRoutesTest {
     }
 
     @Test
-    fun confirmNonDraftFails() = testApplication {
-        application { module() }
+    fun confirmNonDraftFails() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "s")
         val create =
             client.post("/assets") {
@@ -75,8 +82,8 @@ class AssetRoutesTest {
     }
 
     @Test
-    fun listScopedByOrg() = testApplication {
-        application { module() }
+    fun listScopedByOrg() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-a", "s")
         client.ensureSite("org-b", "s")
         client.post("/assets") {
@@ -95,8 +102,8 @@ class AssetRoutesTest {
     }
 
     @Test
-    fun rejectDraftSucceeds() = testApplication {
-        application { module() }
+    fun rejectDraftSucceeds() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "s")
         val create =
             client.post("/assets") {
@@ -114,8 +121,8 @@ class AssetRoutesTest {
     }
 
     @Test
-    fun rejectActiveFails() = testApplication {
-        application { module() }
+    fun rejectActiveFails() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "s")
         val create =
             client.post("/assets") {
@@ -130,8 +137,8 @@ class AssetRoutesTest {
     }
 
     @Test
-    fun deleteActiveAssetSucceeds() = testApplication {
-        application { module() }
+    fun deleteActiveAssetSucceeds() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "s")
         val create =
             client.post("/assets") {
@@ -149,8 +156,8 @@ class AssetRoutesTest {
     }
 
     @Test
-    fun createRejectsDocumentAlreadyBoundToOtherAsset() = testApplication {
-        application { module() }
+    fun createRejectsDocumentAlreadyBoundToOtherAsset() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1")
         client.post("/assets") {
             header("X-Org-Id", "org-1")
@@ -168,8 +175,8 @@ class AssetRoutesTest {
     }
 
     @Test
-    fun patchRejectsDocumentAlreadyBoundToOtherAsset() = testApplication {
-        application { module() }
+    fun patchRejectsDocumentAlreadyBoundToOtherAsset() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1")
         client.post("/assets") {
             header("X-Org-Id", "org-1")
@@ -194,8 +201,8 @@ class AssetRoutesTest {
     }
 
     @Test
-    fun getOtherOrgAssetNotFound() = testApplication {
-        application { module() }
+    fun getOtherOrgAssetNotFound() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-a", "s")
         val create =
             client.post("/assets") {
@@ -210,8 +217,8 @@ class AssetRoutesTest {
     }
 
     @Test
-    fun aiGeneratedForcesDraftEvenWhenAsDraftFalse() = testApplication {
-        application { module() }
+    fun aiGeneratedForcesDraftEvenWhenAsDraftFalse() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "s")
         val create =
             client.post("/assets") {
@@ -227,8 +234,8 @@ class AssetRoutesTest {
     }
 
     @Test
-    fun descriptionPersistedOnCreate() = testApplication {
-        application { module() }
+    fun descriptionPersistedOnCreate() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1")
         val create =
             client.post("/assets") {
@@ -245,8 +252,8 @@ class AssetRoutesTest {
     }
 
     @Test
-    fun patchAssetUpdatesNameInventoryNoAndDescription() = testApplication {
-        application { module() }
+    fun patchAssetUpdatesNameInventoryNoAndDescription() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1")
         val create =
             client.post("/assets") {
@@ -271,8 +278,8 @@ class AssetRoutesTest {
     }
 
     @Test
-    fun patchAssetReplacesDocumentIdsWithAtMostOne() = testApplication {
-        application { module() }
+    fun patchAssetReplacesDocumentIdsWithAtMostOne() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1")
         val create =
             client.post("/assets") {
@@ -297,8 +304,8 @@ class AssetRoutesTest {
     }
 
     @Test
-    fun patchAssetRejectsMultipleDocumentIds() = testApplication {
-        application { module() }
+    fun patchAssetRejectsMultipleDocumentIds() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1")
         val create =
             client.post("/assets") {
@@ -320,8 +327,8 @@ class AssetRoutesTest {
     }
 
     @Test
-    fun createAssetRejectsMultipleDocumentIds() = testApplication {
-        application { module() }
+    fun createAssetRejectsMultipleDocumentIds() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1")
         val create =
             client.post("/assets") {
@@ -334,8 +341,8 @@ class AssetRoutesTest {
     }
 
     @Test
-    fun createWithUnknownSiteFails() = testApplication {
-        application { module() }
+    fun createWithUnknownSiteFails() = withApplication {
+        application { module(dataSource) }
         val create =
             client.post("/assets") {
                 header("X-Org-Id", "org-1")
@@ -347,8 +354,8 @@ class AssetRoutesTest {
     }
 
     @Test
-    fun moveAssetChangesSite() = testApplication {
-        application { module() }
+    fun moveAssetChangesSite() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "a", "A")
         client.ensureSite("org-1", "b", "B")
         val create =
@@ -371,8 +378,8 @@ class AssetRoutesTest {
     }
 
     @Test
-    fun unlinkDocumentsRemovesIds() = testApplication {
-        application { module() }
+    fun unlinkDocumentsRemovesIds() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1")
         val create =
             client.post("/assets") {
@@ -400,8 +407,8 @@ class AssetRoutesTest {
     }
 
     @Test
-    fun unlinkDocumentsOtherOrgNotFound() = testApplication {
-        application { module() }
+    fun unlinkDocumentsOtherOrgNotFound() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-a")
         val create =
             client.post("/assets") {
@@ -419,4 +426,28 @@ class AssetRoutesTest {
             }
         assertEquals(HttpStatusCode.NotFound, unlinked.status)
     }
+    private fun withApplication(block: suspend ApplicationTestBuilder.() -> Unit) {
+        Db.connect(postgres.jdbcUrl, postgres.username, postgres.password).use { connected ->
+            dataSource = connected
+            connected.connection.use { connection ->
+                connection.createStatement().use { statement ->
+                    statement.executeUpdate("TRUNCATE user_scopes, assets, sites")
+                }
+            }
+            testApplication {
+                application { module(dataSource) }
+                block()
+            }
+        }
+    }
+
+    companion object {
+        @Container
+        @JvmStatic
+        val postgres = PostgreSQLContainer("postgres:16-alpine")
+            .withDatabaseName("catalog")
+            .withUsername("catalog")
+            .withPassword("catalog")
+    }
+
 }

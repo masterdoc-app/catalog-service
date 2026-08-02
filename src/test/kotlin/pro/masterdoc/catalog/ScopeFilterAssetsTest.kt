@@ -10,6 +10,11 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
+import io.ktor.server.testing.ApplicationTestBuilder
+import com.zaxxer.hikari.HikariDataSource
+import org.testcontainers.containers.PostgreSQLContainer
+import org.testcontainers.junit.jupiter.Container
+import org.testcontainers.junit.jupiter.Testcontainers
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -18,8 +23,10 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
+@Testcontainers(disabledWithoutDocker = true)
 class ScopeFilterAssetsTest {
     private val json = Json { ignoreUnknownKeys = true }
+    private lateinit var dataSource: HikariDataSource
 
     private suspend fun io.ktor.client.HttpClient.ensureSite(
         orgId: String,
@@ -52,8 +59,8 @@ class ScopeFilterAssetsTest {
             .map { it.jsonObject["name"]!!.jsonPrimitive.content }
 
     @Test
-    fun ae1EmptyScopeWithFilterReturnsEmptyList() = testApplication {
-        application { module() }
+    fun ae1EmptyScopeWithFilterReturnsEmptyList() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         client.createAsset("org-1", "s1", "VisibleToAdmin")
 
@@ -68,8 +75,8 @@ class ScopeFilterAssetsTest {
     }
 
     @Test
-    fun ae1MissingUserIdWithFilterTreatsAsEmptyScope() = testApplication {
-        application { module() }
+    fun ae1MissingUserIdWithFilterTreatsAsEmptyScope() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         client.createAsset("org-1", "s1")
 
@@ -83,8 +90,8 @@ class ScopeFilterAssetsTest {
     }
 
     @Test
-    fun ae2BoundSiteShowsAssetsAtSite() = testApplication {
-        application { module() }
+    fun ae2BoundSiteShowsAssetsAtSite() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         client.put("/user-scopes/engineer-1") {
             header("X-Org-Id", "org-1")
@@ -106,8 +113,8 @@ class ScopeFilterAssetsTest {
     }
 
     @Test
-    fun ae3PinOnlyShowsPinnedAssetNotSiblings() = testApplication {
-        application { module() }
+    fun ae3PinOnlyShowsPinnedAssetNotSiblings() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         val pinnedId = client.createAsset("org-1", "s1", "Pinned")
         client.createAsset("org-1", "s1", "Sibling")
@@ -128,8 +135,8 @@ class ScopeFilterAssetsTest {
     }
 
     @Test
-    fun ae5PinSurvivesAssetMoveInFilteredList() = testApplication {
-        application { module() }
+    fun ae5PinSurvivesAssetMoveInFilteredList() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         client.ensureSite("org-1", "s2")
         val assetId = client.createAsset("org-1", "s1", "Movable")
@@ -155,8 +162,8 @@ class ScopeFilterAssetsTest {
     }
 
     @Test
-    fun filterOffOrAbsentReturnsFullOrgList() = testApplication {
-        application { module() }
+    fun filterOffOrAbsentReturnsFullOrgList() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         client.createAsset("org-1", "s1", "A")
         client.createAsset("org-1", "s1", "B")
@@ -178,8 +185,8 @@ class ScopeFilterAssetsTest {
     }
 
     @Test
-    fun scopeFilterTrueHeaderWorks() = testApplication {
-        application { module() }
+    fun scopeFilterTrueHeaderWorks() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         val assetId = client.createAsset("org-1", "s1", "Pinned")
         client.put("/user-scopes/engineer-1") {
@@ -198,8 +205,8 @@ class ScopeFilterAssetsTest {
     }
 
     @Test
-    fun siteIdQueryIntersectsWithScopeFilter() = testApplication {
-        application { module() }
+    fun siteIdQueryIntersectsWithScopeFilter() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         client.ensureSite("org-1", "s2")
         client.createAsset("org-1", "s1", "AtS1")
@@ -220,8 +227,8 @@ class ScopeFilterAssetsTest {
     }
 
     @Test
-    fun orgIsolationWithScopeFilter() = testApplication {
-        application { module() }
+    fun orgIsolationWithScopeFilter() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-a", "s1")
         client.ensureSite("org-b", "s1")
         client.createAsset("org-a", "s1", "OrgA")
@@ -243,8 +250,8 @@ class ScopeFilterAssetsTest {
     }
 
     @Test
-    fun getByIdUnchangedWithoutScopeFilter() = testApplication {
-        application { module() }
+    fun getByIdUnchangedWithoutScopeFilter() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         val assetId = client.createAsset("org-1", "s1", "Direct")
 
@@ -257,4 +264,28 @@ class ScopeFilterAssetsTest {
         assertEquals(HttpStatusCode.OK, get.status)
         assertTrue(get.bodyAsText().contains("Direct"))
     }
+    private fun withApplication(block: suspend ApplicationTestBuilder.() -> Unit) {
+        Db.connect(postgres.jdbcUrl, postgres.username, postgres.password).use { connected ->
+            dataSource = connected
+            connected.connection.use { connection ->
+                connection.createStatement().use { statement ->
+                    statement.executeUpdate("TRUNCATE user_scopes, assets, sites")
+                }
+            }
+            testApplication {
+                application { module(dataSource) }
+                block()
+            }
+        }
+    }
+
+    companion object {
+        @Container
+        @JvmStatic
+        val postgres = PostgreSQLContainer("postgres:16-alpine")
+            .withDatabaseName("catalog")
+            .withUsername("catalog")
+            .withPassword("catalog")
+    }
+
 }

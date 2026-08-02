@@ -11,6 +11,11 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
+import io.ktor.server.testing.ApplicationTestBuilder
+import com.zaxxer.hikari.HikariDataSource
+import org.testcontainers.containers.PostgreSQLContainer
+import org.testcontainers.junit.jupiter.Container
+import org.testcontainers.junit.jupiter.Testcontainers
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -19,12 +24,14 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
+@Testcontainers(disabledWithoutDocker = true)
 class SiteRoutesTest {
     private val json = Json { ignoreUnknownKeys = true }
+    private lateinit var dataSource: HikariDataSource
 
     @Test
-    fun createListUpdateDelete() = testApplication {
-        application { module() }
+    fun createListUpdateDelete() = withApplication {
+        application { module(dataSource) }
         val create =
             client.post("/sites") {
                 header("X-Org-Id", "org-1")
@@ -57,8 +64,8 @@ class SiteRoutesTest {
     }
 
     @Test
-    fun createSiteWithGeofenceReturnsItOnGet() = testApplication {
-        application { module() }
+    fun createSiteWithGeofenceReturnsItOnGet() = withApplication {
+        application { module(dataSource) }
         val create =
             client.post("/sites") {
                 header("X-Org-Id", "org-geofence")
@@ -76,8 +83,8 @@ class SiteRoutesTest {
     }
 
     @Test
-    fun invalidGeofenceValuesReturnBadRequest() = testApplication {
-        application { module() }
+    fun invalidGeofenceValuesReturnBadRequest() = withApplication {
+        application { module(dataSource) }
         val invalidRequests =
             listOf(
                 """{"id":"invalid-lat","name":"Invalid lat","lat":90.1}""",
@@ -97,8 +104,8 @@ class SiteRoutesTest {
     }
 
     @Test
-    fun updateSiteChangesGeofenceFields() = testApplication {
-        application { module() }
+    fun updateSiteChangesGeofenceFields() = withApplication {
+        application { module(dataSource) }
         client.post("/sites") {
             header("X-Org-Id", "org-update-geofence")
             contentType(ContentType.Application.Json)
@@ -119,8 +126,8 @@ class SiteRoutesTest {
     }
 
     @Test
-    fun deleteBlockedWhenAssetsPresent() = testApplication {
-        application { module() }
+    fun deleteBlockedWhenAssetsPresent() = withApplication {
+        application { module(dataSource) }
         client.post("/sites") {
             header("X-Org-Id", "org-1")
             contentType(ContentType.Application.Json)
@@ -136,8 +143,8 @@ class SiteRoutesTest {
     }
 
     @Test
-    fun emptyOrgListSeedsDefaultCeh1() = testApplication {
-        application { module() }
+    fun emptyOrgListSeedsDefaultCeh1() = withApplication {
+        application { module(dataSource) }
         val list = client.get("/sites") { header("X-Org-Id", "org-empty") }
         assertEquals(HttpStatusCode.OK, list.status)
         val items = json.parseToJsonElement(list.bodyAsText()).jsonObject["items"]!!.jsonArray
@@ -149,8 +156,8 @@ class SiteRoutesTest {
     }
 
     @Test
-    fun secondListDoesNotDuplicateDefault() = testApplication {
-        application { module() }
+    fun secondListDoesNotDuplicateDefault() = withApplication {
+        application { module(dataSource) }
         repeat(2) {
             client.get("/sites") { header("X-Org-Id", "org-once") }
         }
@@ -161,8 +168,8 @@ class SiteRoutesTest {
     }
 
     @Test
-    fun existingSiteSkipsSeed() = testApplication {
-        application { module() }
+    fun existingSiteSkipsSeed() = withApplication {
+        application { module(dataSource) }
         client.post("/sites") {
             header("X-Org-Id", "org-has")
             contentType(ContentType.Application.Json)
@@ -176,8 +183,8 @@ class SiteRoutesTest {
     }
 
     @Test
-    fun afterDeleteAllListReseedsDefault() = testApplication {
-        application { module() }
+    fun afterDeleteAllListReseedsDefault() = withApplication {
+        application { module(dataSource) }
         client.get("/sites") { header("X-Org-Id", "org-reseed") }
         client.delete("/sites/ceh-1") { header("X-Org-Id", "org-reseed") }
         val list = client.get("/sites") { header("X-Org-Id", "org-reseed") }
@@ -187,8 +194,8 @@ class SiteRoutesTest {
     }
 
     @Test
-    fun sitesScopedByOrg() = testApplication {
-        application { module() }
+    fun sitesScopedByOrg() = withApplication {
+        application { module(dataSource) }
         client.post("/sites") {
             header("X-Org-Id", "org-a")
             contentType(ContentType.Application.Json)
@@ -203,4 +210,28 @@ class SiteRoutesTest {
         assertTrue(list.bodyAsText().contains("\"A\""))
         assertTrue(!list.bodyAsText().contains("\"B\""))
     }
+    private fun withApplication(block: suspend ApplicationTestBuilder.() -> Unit) {
+        Db.connect(postgres.jdbcUrl, postgres.username, postgres.password).use { connected ->
+            dataSource = connected
+            connected.connection.use { connection ->
+                connection.createStatement().use { statement ->
+                    statement.executeUpdate("TRUNCATE user_scopes, assets, sites")
+                }
+            }
+            testApplication {
+                application { module(dataSource) }
+                block()
+            }
+        }
+    }
+
+    companion object {
+        @Container
+        @JvmStatic
+        val postgres = PostgreSQLContainer("postgres:16-alpine")
+            .withDatabaseName("catalog")
+            .withUsername("catalog")
+            .withPassword("catalog")
+    }
+
 }

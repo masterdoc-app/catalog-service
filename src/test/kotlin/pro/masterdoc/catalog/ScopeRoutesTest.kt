@@ -10,6 +10,11 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
+import io.ktor.server.testing.ApplicationTestBuilder
+import com.zaxxer.hikari.HikariDataSource
+import org.testcontainers.containers.PostgreSQLContainer
+import org.testcontainers.junit.jupiter.Container
+import org.testcontainers.junit.jupiter.Testcontainers
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -19,8 +24,10 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
+@Testcontainers(disabledWithoutDocker = true)
 class ScopeRoutesTest {
     private val json = Json { ignoreUnknownKeys = true }
+    private lateinit var dataSource: HikariDataSource
 
     private suspend fun io.ktor.client.HttpClient.ensureSite(
         orgId: String,
@@ -49,8 +56,8 @@ class ScopeRoutesTest {
     }
 
     @Test
-    fun putGetScopeRoundTrip() = testApplication {
-        application { module() }
+    fun putGetScopeRoundTrip() = withApplication {
+        application { module(dataSource) }
         val put =
             client.put("/user-scopes/user-1") {
                 header("X-Org-Id", "org-1")
@@ -71,8 +78,8 @@ class ScopeRoutesTest {
     }
 
     @Test
-    fun getEmptyScopeReturnsDefaults() = testApplication {
-        application { module() }
+    fun getEmptyScopeReturnsDefaults() = withApplication {
+        application { module(dataSource) }
         val get = client.get("/user-scopes/unknown-user") { header("X-Org-Id", "org-1") }
         assertEquals(HttpStatusCode.OK, get.status)
         val body = json.parseToJsonElement(get.bodyAsText()).jsonObject
@@ -82,8 +89,8 @@ class ScopeRoutesTest {
     }
 
     @Test
-    fun scopesScopedByOrg() = testApplication {
-        application { module() }
+    fun scopesScopedByOrg() = withApplication {
+        application { module(dataSource) }
         client.put("/user-scopes/user-1") {
             header("X-Org-Id", "org-a")
             contentType(ContentType.Application.Json)
@@ -105,8 +112,8 @@ class ScopeRoutesTest {
     }
 
     @Test
-    fun coversTrueViaSiteMembership() = testApplication {
-        application { module() }
+    fun coversTrueViaSiteMembership() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         val assetId = client.createAsset("org-1", "s1")
         client.put("/user-scopes/engineer-1") {
@@ -124,8 +131,8 @@ class ScopeRoutesTest {
     }
 
     @Test
-    fun coversTrueViaPin() = testApplication {
-        application { module() }
+    fun coversTrueViaPin() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         client.ensureSite("org-1", "s2")
         val assetId = client.createAsset("org-1", "s2", "Pinned")
@@ -144,8 +151,8 @@ class ScopeRoutesTest {
     }
 
     @Test
-    fun coversFalseWhenNeitherSiteNorPin() = testApplication {
-        application { module() }
+    fun coversFalseWhenNeitherSiteNorPin() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         client.ensureSite("org-1", "s2")
         val assetId = client.createAsset("org-1", "s2")
@@ -164,8 +171,8 @@ class ScopeRoutesTest {
     }
 
     @Test
-    fun coversFalseForEmptyScope() = testApplication {
-        application { module() }
+    fun coversFalseForEmptyScope() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         val assetId = client.createAsset("org-1", "s1")
 
@@ -178,8 +185,8 @@ class ScopeRoutesTest {
     }
 
     @Test
-    fun pinSurvivesAssetMove() = testApplication {
-        application { module() }
+    fun pinSurvivesAssetMove() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         client.ensureSite("org-1", "s2")
         val assetId = client.createAsset("org-1", "s1", "Movable")
@@ -204,8 +211,8 @@ class ScopeRoutesTest {
     }
 
     @Test
-    fun coversNotFoundForUnknownAsset() = testApplication {
-        application { module() }
+    fun coversNotFoundForUnknownAsset() = withApplication {
+        application { module(dataSource) }
         client.put("/user-scopes/engineer-1") {
             header("X-Org-Id", "org-1")
             contentType(ContentType.Application.Json)
@@ -219,8 +226,8 @@ class ScopeRoutesTest {
     }
 
     @Test
-    fun candidatesListsUsersCoveringAsset() = testApplication {
-        application { module() }
+    fun candidatesListsUsersCoveringAsset() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-1", "s1")
         val assetId = client.createAsset("org-1", "s1")
         client.put("/user-scopes/e1") {
@@ -251,8 +258,8 @@ class ScopeRoutesTest {
     }
 
     @Test
-    fun candidatesScopedByOrg() = testApplication {
-        application { module() }
+    fun candidatesScopedByOrg() = withApplication {
+        application { module(dataSource) }
         client.ensureSite("org-a", "s1")
         client.ensureSite("org-b", "s1")
         val assetA = client.createAsset("org-a", "s1")
@@ -286,4 +293,28 @@ class ScopeRoutesTest {
                 .map { it.jsonPrimitive.content }
         assertEquals(listOf("e2"), userIdsB)
     }
+    private fun withApplication(block: suspend ApplicationTestBuilder.() -> Unit) {
+        Db.connect(postgres.jdbcUrl, postgres.username, postgres.password).use { connected ->
+            dataSource = connected
+            connected.connection.use { connection ->
+                connection.createStatement().use { statement ->
+                    statement.executeUpdate("TRUNCATE user_scopes, assets, sites")
+                }
+            }
+            testApplication {
+                application { module(dataSource) }
+                block()
+            }
+        }
+    }
+
+    companion object {
+        @Container
+        @JvmStatic
+        val postgres = PostgreSQLContainer("postgres:16-alpine")
+            .withDatabaseName("catalog")
+            .withUsername("catalog")
+            .withPassword("catalog")
+    }
+
 }

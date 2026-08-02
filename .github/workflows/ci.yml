@@ -66,6 +66,9 @@ jobs:
       - name: Build runtime .env
         run: |
           printf '%s\n' \
+            'POSTGRES_DB=catalog' \
+            'POSTGRES_USER=catalog' \
+            'POSTGRES_PASSWORD=catalog' \
             'CATALOG_SERVICE_PORT=8091' \
             > runtime.env
           chmod 600 runtime.env
