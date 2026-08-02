@@ -1,0 +1,38 @@
+name: Put User Scope
+
+on:
+  workflow_dispatch:
+    inputs:
+      org_id:
+        required: true
+        default: "383177088934346755"
+      user_id:
+        required: true
+        default: "384475024746086403"
+      site_ids:
+        description: Comma-separated site ids
+        required: true
+        default: "ceh-1"
+
+jobs:
+  put:
+    runs-on: ubuntu-latest
+    steps:
+      - name: PUT user-scopes
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          ORG_ID: ${{ inputs.org_id }}
+          USER_ID: ${{ inputs.user_id }}
+          SITE_IDS: ${{ inputs.site_ids }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/deploy_key
+          printf '%s\n' "$KEY" > /tmp/deploy_key
+          BODY="$(SITE_IDS="$SITE_IDS" python3 -c 'import json,os; print(json.dumps({"siteIds":[s for s in os.environ["SITE_IDS"].split(",") if s],"assetIds":[]}))')"
+          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no "${USER}@${HOST}" \
+            "curl -sS -X PUT -H 'X-Org-Id: ${ORG_ID}' -H 'Content-Type: application/json' \
+            -d $(printf %q "$BODY") \
+            http://127.0.0.1:8091/user-scopes/${USER_ID}" | tee /tmp/scope.json
+          python3 -m json.tool /tmp/scope.json
