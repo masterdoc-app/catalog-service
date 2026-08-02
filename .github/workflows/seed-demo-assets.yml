@@ -12,7 +12,7 @@ jobs:
   seed:
     runs-on: ubuntu-latest
     steps:
-      - name: Seed four demo assets on Цех 1
+      - name: Replace org assets with four demo units
         env:
           HOST: ${{ secrets.DEPLOY_HOST }}
           USER: ${{ secrets.DEPLOY_USER }}
@@ -25,22 +25,41 @@ jobs:
           ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no "${USER}@${HOST}" \
             ORG_ID="$ORG_ID" bash -s <<'EOF'
           set -euo pipefail
-          # ensure site exists (GET seeds Цех 1 if empty)
           curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/sites >/tmp/sites.json
           SITE_ID="$(python3 -c 'import json; print((json.load(open("/tmp/sites.json")).get("items") or [{"id":"ceh-1"}])[0]["id"])')"
           echo "SITE_ID=$SITE_ID"
+
+          curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/assets >/tmp/assets.json
+          python3 - <<'PY' >/tmp/to_delete.txt
+          import json
+          for a in json.load(open("/tmp/assets.json")).get("items") or []:
+              print(a["id"])
+          PY
+          while read -r id; do
+            [[ -z "$id" ]] && continue
+            CODE="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+              -H "X-Org-Id: ${ORG_ID}" "http://127.0.0.1:8091/assets/${id}")"
+            echo "DELETE $id -> $CODE"
+          done < /tmp/to_delete.txt
+
           seed() {
             local name="$1"
             CODE="$(curl -sS -o /tmp/asset.json -w '%{http_code}' \
               -X POST -H "X-Org-Id: ${ORG_ID}" -H "Content-Type: application/json" \
               -d "{\"name\":\"${name}\",\"siteId\":\"${SITE_ID}\",\"source\":\"manual\",\"asDraft\":false}" \
               http://127.0.0.1:8091/assets)"
-            echo "POST $name -> $CODE $(python3 -c 'import json; d=json.load(open("/tmp/asset.json")); print(d.get("id",d))')"
+            echo "POST $name -> $CODE"
           }
           seed "Компрессор Hitachi Oil-Free"
           seed "Компрессор Ingersoll Rand R-Series"
           seed "Насосный агрегат НЦВ-80"
           seed "ПЧ Danfoss VLT AutomationDrive"
-          echo "== list =="
-          curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/assets | python3 -m json.tool | head -100
+
+          curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/assets | python3 -c '
+          import json,sys
+          items=json.load(sys.stdin).get("items") or []
+          print("TOTAL="+str(len(items)))
+          for a in items:
+              print("-", a.get("status"), a.get("name"))
+          '
           EOF
