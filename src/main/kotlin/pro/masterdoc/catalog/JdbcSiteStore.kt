@@ -34,8 +34,11 @@ class JdbcSiteStore(private val dataSource: DataSource) {
                     s.executeUpdate()
                 }
             }
-        } catch (_: SQLException) {
-            throw IllegalArgumentException("site id already exists")
+        } catch (e: SQLException) {
+            if (e.sqlState == "23505") {
+                throw IllegalArgumentException("site id already exists", e)
+            }
+            throw e
         }
         return site
     }
