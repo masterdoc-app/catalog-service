@@ -1,0 +1,46 @@
+name: Seed Demo Assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      org_id:
+        description: Org to seed
+        required: true
+        default: "382715225649971203"
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Seed four demo assets on Цех 1
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          ORG_ID: ${{ inputs.org_id }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/deploy_key
+          printf '%s\n' "$KEY" > /tmp/deploy_key
+          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no "${USER}@${HOST}" \
+            ORG_ID="$ORG_ID" bash -s <<'EOF'
+          set -euo pipefail
+          # ensure site exists (GET seeds Цех 1 if empty)
+          curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/sites >/tmp/sites.json
+          SITE_ID="$(python3 -c 'import json; print((json.load(open("/tmp/sites.json")).get("items") or [{"id":"ceh-1"}])[0]["id"])')"
+          echo "SITE_ID=$SITE_ID"
+          seed() {
+            local name="$1"
+            CODE="$(curl -sS -o /tmp/asset.json -w '%{http_code}' \
+              -X POST -H "X-Org-Id: ${ORG_ID}" -H "Content-Type: application/json" \
+              -d "{\"name\":\"${name}\",\"siteId\":\"${SITE_ID}\",\"source\":\"manual\",\"asDraft\":false}" \
+              http://127.0.0.1:8091/assets)"
+            echo "POST $name -> $CODE $(python3 -c 'import json; d=json.load(open("/tmp/asset.json")); print(d.get("id",d))')"
+          }
+          seed "Компрессор Hitachi Oil-Free"
+          seed "Компрессор Ingersoll Rand R-Series"
+          seed "Насосный агрегат НЦВ-80"
+          seed "ПЧ Danfoss VLT AutomationDrive"
+          echo "== list =="
+          curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/assets | python3 -m json.tool | head -100
+          EOF
