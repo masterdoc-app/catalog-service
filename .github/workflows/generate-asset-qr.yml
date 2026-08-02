@@ -1,0 +1,49 @@
+name: Generate Asset QR
+
+on:
+  workflow_dispatch:
+    inputs:
+      org_id:
+        required: true
+        default: "383177088934346755"
+      asset_id:
+        description: Asset UUID (leave empty to pick first active)
+        required: false
+        default: ""
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /assets/{id}/qr on VPS catalog
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          ORG_ID: ${{ inputs.org_id }}
+          ASSET_ID: ${{ inputs.asset_id }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/deploy_key
+          printf '%s\n' "$KEY" > /tmp/deploy_key
+          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no "${USER}@${HOST}" bash -s <<EOF
+          set -euo pipefail
+          ORG_ID='${ORG_ID}'
+          ASSET_ID='${ASSET_ID}'
+          if [[ -z "\$ASSET_ID" ]]; then
+            ASSET_ID=\$(curl -sS -H "X-Org-Id: \$ORG_ID" http://127.0.0.1:8091/assets \
+              | python3 -c 'import json,sys; items=json.load(sys.stdin).get("items") or []; act=[a for a in items if a.get("status")=="active"]; print(act[0]["id"] if act else "")')
+          fi
+          test -n "\$ASSET_ID"
+          echo "ASSET_ID=\$ASSET_ID"
+          curl -sS -X POST -H "X-Org-Id: \$ORG_ID" -H "X-User-Id: smoke-ops" \
+            "http://127.0.0.1:8091/assets/\${ASSET_ID}/qr" | tee /tmp/qr.json
+          python3 -m json.tool /tmp/qr.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open("/tmp/qr.json"))
+          print("QR_TOKEN="+d.get("qrToken",""))
+          print("QR_URL="+d.get("qrUrl",""))
+          print("ASSET_NAME="+(d.get("asset") or {}).get("name",""))
+          PY
+          EOF
