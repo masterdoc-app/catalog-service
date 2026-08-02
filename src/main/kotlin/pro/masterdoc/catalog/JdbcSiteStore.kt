@@ -2,6 +2,7 @@ package pro.masterdoc.catalog
 
 import java.sql.Connection
 import java.sql.SQLException
+import java.sql.Types
 import java.util.UUID
 import javax.sql.DataSource
 
@@ -27,9 +28,9 @@ class JdbcSiteStore(private val dataSource: DataSource) {
                     s.setString(2, orgId)
                     s.setString(3, site.name)
                     s.setString(4, site.address)
-                    s.setObject(5, site.lat)
-                    s.setObject(6, site.lon)
-                    s.setObject(7, site.geofenceRadiusM)
+                    if (site.lat == null) s.setNull(5, Types.DOUBLE) else s.setDouble(5, site.lat)
+                    if (site.lon == null) s.setNull(6, Types.DOUBLE) else s.setDouble(6, site.lon)
+                    if (site.geofenceRadiusM == null) s.setNull(7, Types.INTEGER) else s.setInt(7, site.geofenceRadiusM)
                     s.executeUpdate()
                 }
             }
@@ -98,9 +99,9 @@ class JdbcSiteStore(private val dataSource: DataSource) {
             ).use { s ->
                 s.setString(1, updated.name)
                 s.setString(2, updated.address)
-                s.setObject(3, updated.lat)
-                s.setObject(4, updated.lon)
-                s.setObject(5, updated.geofenceRadiusM)
+                if (updated.lat == null) s.setNull(3, Types.DOUBLE) else s.setDouble(3, updated.lat)
+                if (updated.lon == null) s.setNull(4, Types.DOUBLE) else s.setDouble(4, updated.lon)
+                if (updated.geofenceRadiusM == null) s.setNull(5, Types.INTEGER) else s.setInt(5, updated.geofenceRadiusM)
                 s.setString(6, orgId)
                 s.setString(7, id)
                 s.executeUpdate()
