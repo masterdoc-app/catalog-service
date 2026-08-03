@@ -72,25 +72,25 @@ jobs:
           fi
           echo "WO_ID=$WO_ID"
 
-          cd /opt/dashboard-service/deploy
-          docker compose exec -T dashboard-postgres psql -U dashboard -d dashboard -v ON_ERROR_STOP=1 -c \
-            "UPDATE work_orders SET assignee_id = '${ENGINEER_ID}' WHERE id = '${WO_ID}'; SELECT id, title, assignee_id, asset_id FROM work_orders WHERE id = '${WO_ID}';"
+          # IMPORTANT: pipe SQL so docker compose exec -T does not consume bash -s stdin
+          printf '%s\n' \
+            "UPDATE work_orders SET assignee_id = '${ENGINEER_ID}' WHERE id = '${WO_ID}';" \
+            "SELECT id, title, assignee_id, asset_id FROM work_orders WHERE id = '${WO_ID}';" \
+            | docker compose -f /opt/dashboard-service/deploy/docker-compose.yml \
+              exec -T dashboard-postgres \
+              psql -U dashboard -d dashboard -v ON_ERROR_STOP=1
 
           echo "== list_asset_documents via document-mcp =="
           curl -sS -X POST -H "X-Org-Id: ${ORG_ID}" -H "Content-Type: application/json" \
             -d "{\"name\":\"list_asset_documents\",\"arguments\":{\"assetId\":\"${ASSET_ID}\"}}" \
             http://127.0.0.1:8097/mcp/tools/call | tee /tmp/mcp.json | head -c 800
           echo
-          python3 - <<'PY'
+          python3 -c '
           import json
-          raw=open("/tmp/mcp.json").read()
-          data=json.loads(raw)
-          text=json.dumps(data, ensure_ascii=False)
-          assert "document" in text.lower() or "id" in text
-          # empty list would be short
+          text=json.dumps(json.load(open("/tmp/mcp.json")), ensure_ascii=False)
           assert len(text) > 100, text
           print("MCP_DOCS_OK chars=", len(text))
-          PY
+          '
 
           echo "== mentor =="
           CODE="$(curl -sS -o /tmp/mentor.json -w '%{http_code}' -X POST \
@@ -101,10 +101,9 @@ jobs:
           echo "MENTOR_HTTP=$CODE"
           head -c 600 /tmp/mentor.json; echo
           [[ "$CODE" == "200" ]]
-          python3 - <<'PY'
-          import json,sys
+          python3 -c '
+          import json
           t=open("/tmp/mentor.json").read()
-          # may be {"reply":"..."} or plain string
           try:
             j=json.loads(t)
             reply=j.get("reply") or j.get("message") or j.get("answer") or str(j)
@@ -115,5 +114,5 @@ jobs:
           bad=("отсутствуют" in low and "документ" in low) or ("нет информации" in low)
           assert not bad, reply
           print("MENTOR_OK")
-          PY
+          '
           EOF
