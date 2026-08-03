@@ -61,7 +61,16 @@ class JdbcSiteStore(private val dataSource: DataSource) {
         val current = list(orgId)
         if (current.isNotEmpty()) return current
         try {
-            create(orgId, CreateSiteRequest(id = "ceh-1", name = "Цех 1"))
+            create(
+                orgId,
+                CreateSiteRequest(
+                    id = "ceh-1",
+                    name = "Цех 1",
+                    lat = 55.751244,
+                    lon = 37.618423,
+                    geofenceRadiusM = 200,
+                ),
+            )
         } catch (_: IllegalArgumentException) {
             // Another request seeded the default concurrently.
         }

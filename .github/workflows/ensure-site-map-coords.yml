@@ -1,0 +1,63 @@
+name: Ensure Site Map Coords
+
+on:
+  workflow_dispatch:
+    inputs:
+      org_id:
+        required: true
+        default: "382715225649971203"
+      lat:
+        required: true
+        default: "55.751244"
+      lon:
+        required: true
+        default: "37.618423"
+      radius_m:
+        required: true
+        default: "200"
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: PATCH first site coords for map center
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          ORG_ID: ${{ inputs.org_id }}
+          LAT: ${{ inputs.lat }}
+          LON: ${{ inputs.lon }}
+          RADIUS: ${{ inputs.radius_m }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/deploy_key
+          printf '%s\n' "$KEY" > /tmp/deploy_key
+          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no "${USER}@${HOST}" \
+            ORG_ID="$ORG_ID" LAT="$LAT" LON="$LON" RADIUS="$RADIUS" bash -s <<'EOF'
+          set -euo pipefail
+          curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/sites >/tmp/sites.json
+          python3 - <<'PY'
+          import json, os, urllib.request
+          org = os.environ["ORG_ID"]
+          items = json.load(open("/tmp/sites.json")).get("items") or []
+          if not items:
+              raise SystemExit("no sites")
+          site = items[0]
+          site_id = site["id"]
+          body = json.dumps({
+              "lat": float(os.environ["LAT"]),
+              "lon": float(os.environ["LON"]),
+              "geofenceRadiusM": int(os.environ["RADIUS"]),
+          }).encode()
+          req = urllib.request.Request(
+              f"http://127.0.0.1:8091/sites/{site_id}",
+              data=body,
+              headers={"Content-Type": "application/json", "X-Org-Id": org},
+              method="PATCH",
+          )
+          with urllib.request.urlopen(req) as resp:
+              print(resp.status, resp.read().decode())
+          PY
+          curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/sites | python3 -m json.tool
+          EOF
