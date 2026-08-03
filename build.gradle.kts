@@ -22,6 +22,8 @@ dependencies {
     implementation("com.zaxxer:HikariCP:5.1.0")
     implementation("org.flywaydb:flyway-core:10.21.0")
     implementation("org.flywaydb:flyway-database-postgresql:10.21.0")
+    implementation("com.google.zxing:core:3.5.4")
+    implementation("org.apache.pdfbox:pdfbox:3.0.8")
 
     testImplementation(kotlin("test"))
     testImplementation("io.ktor:ktor-server-test-host-jvm:$ktor")

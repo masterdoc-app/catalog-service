@@ -23,6 +23,7 @@ class JdbcAssetStore(private val dataSource: DataSource) {
         require(req.documentIds.size <= 1) { "at most one document" }
         requireDocumentsAvailable(orgId, req.documentIds, null)
         val source = req.source
+        val status = if (req.asDraft || source == RecordSource.ai_generated) RecordStatus.draft else RecordStatus.active
         val asset = Asset(
             id = UUID.randomUUID().toString(),
             orgId = orgId,
@@ -31,13 +32,14 @@ class JdbcAssetStore(private val dataSource: DataSource) {
             inventoryNo = req.inventoryNo?.trim()?.takeIf { it.isNotEmpty() },
             category = req.category?.trim()?.takeIf { it.isNotEmpty() },
             description = req.description?.trim()?.takeIf { it.isNotEmpty() },
-            status = if (req.asDraft || source == RecordSource.ai_generated) RecordStatus.draft else RecordStatus.active,
+            status = status,
             source = source,
             documentIds = req.documentIds.distinct().take(1),
+            qrToken = if (status == RecordStatus.active) newQrToken() else null,
         )
         dataSource.connection.use { c ->
             c.prepareStatement(
-                "INSERT INTO assets (id, org_id, site_id, name, inventory_no, category, description, status, source, document_ids) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO assets (id, org_id, site_id, name, inventory_no, category, description, status, source, document_ids, qr_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ).use { s ->
                 s.setString(1, asset.id)
                 s.setString(2, orgId)
@@ -49,6 +51,7 @@ class JdbcAssetStore(private val dataSource: DataSource) {
                 s.setString(8, asset.status.name)
                 s.setString(9, asset.source.name)
                 s.setJson(10, asset.documentIds)
+                s.setString(11, asset.qrToken)
                 s.executeUpdate()
             }
         }
@@ -113,7 +116,10 @@ class JdbcAssetStore(private val dataSource: DataSource) {
     fun confirm(orgId: String, id: String): Asset {
         val asset = get(orgId, id)
         require(asset.status == RecordStatus.draft) { "Only draft assets can be confirmed" }
-        return asset.copy(status = RecordStatus.active).also(::save)
+        return asset.copy(
+            status = RecordStatus.active,
+            qrToken = asset.qrToken ?: newQrToken(),
+        ).also(::save)
     }
 
     fun reject(orgId: String, id: String) {
@@ -160,17 +166,23 @@ class JdbcAssetStore(private val dataSource: DataSource) {
         return asset.copy(documentIds = asset.documentIds.filter { it !in documentIds.toSet() }).also(::save)
     }
 
-    /**
-     * Rotates the QR token for an active asset.
-     *
-     * Draft assets are rejected with [IllegalArgumentException]; the HTTP layer maps that
-     * store-level decision to its public status code.
-     */
-    fun rotateQrToken(orgId: String, id: String): Asset {
+    fun ensureQrToken(orgId: String, id: String): Asset {
         val asset = get(orgId, id)
         require(asset.status == RecordStatus.active) { "Only active assets can have QR tokens" }
-        val tokenBytes = ByteArray(18).also(secureRandom::nextBytes)
-        return asset.copy(qrToken = tokenEncoder.encodeToString(tokenBytes)).also(::save)
+        if (asset.qrToken != null) return asset
+
+        dataSource.connection.use { c ->
+            c.prepareStatement(
+                "UPDATE assets SET qr_token = ? WHERE org_id = ? AND id = ? AND status = ? AND qr_token IS NULL",
+            ).use { s ->
+                s.setString(1, newQrToken())
+                s.setString(2, orgId)
+                s.setString(3, id)
+                s.setString(4, RecordStatus.active.name)
+                s.executeUpdate()
+            }
+        }
+        return get(orgId, id)
     }
 
     fun findActiveByQrToken(orgId: String, token: String): Asset? {
@@ -197,6 +209,11 @@ class JdbcAssetStore(private val dataSource: DataSource) {
                 "document already bound to equipment"
             }
         }
+    }
+
+    private fun newQrToken(): String {
+        val tokenBytes = ByteArray(18).also(secureRandom::nextBytes)
+        return tokenEncoder.encodeToString(tokenBytes)
     }
 
     private fun save(asset: Asset) {

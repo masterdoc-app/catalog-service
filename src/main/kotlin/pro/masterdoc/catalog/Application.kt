@@ -1,5 +1,6 @@
 package pro.masterdoc.catalog
 
+import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
@@ -13,6 +14,7 @@ import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.header
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
@@ -133,6 +135,15 @@ fun Application.module(dataSource: DataSource) {
                 ),
             )
         }
+        get("/assets/{id}/qr.pdf") {
+            val orgId = call.orgId()
+            val asset = assets.ensureQrToken(orgId, call.parameters["id"]!!)
+            val qrToken = requireNotNull(asset.qrToken)
+            call.respondBytes(
+                createAssetQrPdf(asset, "$ASSET_QR_BASE_URL$qrToken"),
+                ContentType.Application.Pdf,
+            )
+        }
         get("/assets/{id}") {
             val orgId = call.orgId()
             call.respond(assets.get(orgId, call.parameters["id"]!!))
@@ -153,18 +164,6 @@ fun Application.module(dataSource: DataSource) {
         post("/assets/{id}/confirm") {
             val orgId = call.orgId()
             call.respond(assets.confirm(orgId, call.parameters["id"]!!))
-        }
-        post("/assets/{id}/qr") {
-            val orgId = call.orgId()
-            val asset = assets.rotateQrToken(orgId, call.parameters["id"]!!)
-            val qrToken = requireNotNull(asset.qrToken)
-            call.respond(
-                AssetQrResponse(
-                    qrToken = qrToken,
-                    qrUrl = "$ASSET_QR_BASE_URL$qrToken",
-                    asset = asset,
-                ),
-            )
         }
         post("/assets/{id}/reject") {
             val orgId = call.orgId()
@@ -303,13 +302,6 @@ data class UnlinkDocumentsRequest(val documentIds: List<String>)
 
 @Serializable
 data class AssetList(val items: List<Asset>)
-
-@Serializable
-data class AssetQrResponse(
-    val qrToken: String,
-    val qrUrl: String,
-    val asset: Asset,
-)
 
 @Serializable
 data class AssetQrResolveResponse(

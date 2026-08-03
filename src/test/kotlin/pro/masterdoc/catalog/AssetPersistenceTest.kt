@@ -7,7 +7,6 @@ import java.sql.SQLException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -44,7 +43,7 @@ class AssetPersistenceTest {
     }
 
     @Test
-    fun rotatesAndFindsUrlSafeTokenForActiveAsset() {
+    fun createsActiveAssetWithUrlSafeQrToken() {
         val orgId = "org-qr-active"
 
         Db.connect(postgres.jdbcUrl, postgres.username, postgres.password).use { ds ->
@@ -55,23 +54,16 @@ class AssetPersistenceTest {
                 CreateAssetRequest(name = "Компрессор", siteId = site.id, asDraft = false),
             )
 
-            val first = store.rotateQrToken(orgId, asset.id)
-            val firstToken = assertNotNull(first.qrToken)
-            assertTrue(firstToken.length >= 22)
-            assertTrue(firstToken.matches(Regex("[A-Za-z0-9_-]+")))
-            assertEquals(first, store.findActiveByQrToken(orgId, firstToken))
-
-            val second = store.rotateQrToken(orgId, asset.id)
-            val secondToken = assertNotNull(second.qrToken)
-            assertNotEquals(firstToken, secondToken)
-            assertNull(store.findActiveByQrToken(orgId, firstToken))
-            assertEquals(second, store.findActiveByQrToken(orgId, secondToken))
-            assertNull(store.findActiveByQrToken("another-org", secondToken))
+            val token = assertNotNull(asset.qrToken)
+            assertTrue(token.length >= 22)
+            assertTrue(token.matches(Regex("[A-Za-z0-9_-]+")))
+            assertEquals(asset, store.findActiveByQrToken(orgId, token))
+            assertNull(store.findActiveByQrToken("another-org", token))
         }
     }
 
     @Test
-    fun refusesToRotateQrTokenForDraftAsset() {
+    fun confirmMintsQrTokenForDraftAsset() {
         val orgId = "org-qr-draft"
 
         Db.connect(postgres.jdbcUrl, postgres.username, postgres.password).use { ds ->
@@ -82,8 +74,71 @@ class AssetPersistenceTest {
                 CreateAssetRequest(name = "Черновик", siteId = site.id),
             )
 
+            assertNull(asset.qrToken)
+            val confirmed = store.confirm(orgId, asset.id)
+            assertNotNull(confirmed.qrToken)
+            assertEquals(RecordStatus.active, confirmed.status)
+        }
+    }
+
+    @Test
+    fun ensureQrTokenReturnsExistingTokenWithoutRotation() {
+        val orgId = "org-qr-ensure"
+
+        Db.connect(postgres.jdbcUrl, postgres.username, postgres.password).use { ds ->
+            val site = JdbcSiteStore(ds).create(orgId, CreateSiteRequest(name = "Цех"))
+            val store = JdbcAssetStore(ds)
+            val asset = store.create(
+                orgId,
+                CreateAssetRequest(name = "Компрессор", siteId = site.id, asDraft = false),
+            )
+
+            val originalToken = assertNotNull(asset.qrToken)
+            assertEquals(originalToken, store.ensureQrToken(orgId, asset.id).qrToken)
+            assertEquals(originalToken, store.ensureQrToken(orgId, asset.id).qrToken)
+        }
+    }
+
+    @Test
+    fun ensureQrTokenMintsMissingTokenForActiveAsset() {
+        val orgId = "org-qr-lazy-ensure"
+
+        Db.connect(postgres.jdbcUrl, postgres.username, postgres.password).use { ds ->
+            val site = JdbcSiteStore(ds).create(orgId, CreateSiteRequest(name = "Цех"))
+            val store = JdbcAssetStore(ds)
+            val asset = store.create(
+                orgId,
+                CreateAssetRequest(name = "Компрессор", siteId = site.id, asDraft = false),
+            )
+            ds.connection.use { connection ->
+                connection.prepareStatement("UPDATE assets SET qr_token = NULL WHERE org_id = ? AND id = ?").use { statement ->
+                    statement.setString(1, orgId)
+                    statement.setString(2, asset.id)
+                    statement.executeUpdate()
+                }
+            }
+
+            val ensured = store.ensureQrToken(orgId, asset.id)
+
+            assertNotNull(ensured.qrToken)
+            assertEquals(ensured, store.get(orgId, asset.id))
+        }
+    }
+
+    @Test
+    fun ensureQrTokenRejectsDraftAsset() {
+        val orgId = "org-qr-draft-ensure"
+
+        Db.connect(postgres.jdbcUrl, postgres.username, postgres.password).use { ds ->
+            val site = JdbcSiteStore(ds).create(orgId, CreateSiteRequest(name = "Цех"))
+            val store = JdbcAssetStore(ds)
+            val asset = store.create(
+                orgId,
+                CreateAssetRequest(name = "Черновик", siteId = site.id),
+            )
+
             assertFailsWith<IllegalArgumentException> {
-                store.rotateQrToken(orgId, asset.id)
+                store.ensureQrToken(orgId, asset.id)
             }
             assertNull(store.get(orgId, asset.id).qrToken)
         }
@@ -100,7 +155,7 @@ class AssetPersistenceTest {
                 orgId,
                 CreateAssetRequest(name = "Насос", siteId = site.id, asDraft = false),
             )
-            val token = assertNotNull(store.rotateQrToken(orgId, asset.id).qrToken)
+            val token = assertNotNull(asset.qrToken)
 
             ds.connection.use { connection ->
                 connection.prepareStatement("UPDATE assets SET status = 'draft' WHERE org_id = ? AND id = ?").use { statement ->
@@ -134,7 +189,7 @@ class AssetPersistenceTest {
                 "other-org",
                 CreateAssetRequest(name = "Насос 3", siteId = otherSite.id, asDraft = false),
             )
-            val token = assertNotNull(store.rotateQrToken(orgId, first.id).qrToken)
+            val token = assertNotNull(first.qrToken)
 
             ds.connection.use { connection ->
                 connection.prepareStatement("UPDATE assets SET qr_token = ? WHERE org_id = ? AND id = ?").use { statement ->

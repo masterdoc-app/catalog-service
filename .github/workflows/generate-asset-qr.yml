@@ -1,4 +1,4 @@
-name: Generate Asset QR
+name: Download Asset QR PDF
 
 on:
   workflow_dispatch:
@@ -15,7 +15,7 @@ jobs:
   generate:
     runs-on: ubuntu-latest
     steps:
-      - name: POST /assets/{id}/qr on VPS catalog
+      - name: GET /assets/{id}/qr.pdf on VPS catalog
         env:
           HOST: ${{ secrets.DEPLOY_HOST }}
           USER: ${{ secrets.DEPLOY_USER }}
@@ -36,14 +36,8 @@ jobs:
           fi
           test -n "\$ASSET_ID"
           echo "ASSET_ID=\$ASSET_ID"
-          curl -sS -X POST -H "X-Org-Id: \$ORG_ID" -H "X-User-Id: smoke-ops" \
-            "http://127.0.0.1:8091/assets/\${ASSET_ID}/qr" | tee /tmp/qr.json
-          python3 -m json.tool /tmp/qr.json
-          python3 - <<'PY'
-          import json
-          d=json.load(open("/tmp/qr.json"))
-          print("QR_TOKEN="+d.get("qrToken",""))
-          print("QR_URL="+d.get("qrUrl",""))
-          print("ASSET_NAME="+(d.get("asset") or {}).get("name",""))
-          PY
+          curl -fsS -H "X-Org-Id: \$ORG_ID" -H "X-User-Id: smoke-ops" \
+            "http://127.0.0.1:8091/assets/\${ASSET_ID}/qr.pdf" -o /tmp/asset-qr.pdf
+          test "\$(dd if=/tmp/asset-qr.pdf bs=5 count=1 2>/dev/null)" = "%PDF-"
+          file /tmp/asset-qr.pdf
           EOF
