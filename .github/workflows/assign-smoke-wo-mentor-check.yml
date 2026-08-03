@@ -1,0 +1,119 @@
+name: Assign Smoke WO + Mentor Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      org_id:
+        default: "383177088934346755"
+      engineer_user_id:
+        default: "384475024746086403"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assign WO, verify docs, call mentor
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          ORG_ID: ${{ inputs.org_id }}
+          ENGINEER_ID: ${{ inputs.engineer_user_id }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/deploy_key
+          printf '%s\n' "$KEY" > /tmp/deploy_key
+          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no "${USER}@${HOST}" \
+            ORG_ID="$ORG_ID" ENGINEER_ID="$ENGINEER_ID" bash -s <<'EOF'
+          set -euo pipefail
+
+          echo "== assets =="
+          curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/assets | tee /tmp/assets.json | python3 -c '
+          import json,sys
+          items=json.load(sys.stdin).get("items") or []
+          assert items and all(a.get("documentIds") for a in items), items
+          for a in items:
+            print(a["name"], "docs=", a["documentIds"])
+          print("ASSET_OK", len(items))
+          '
+
+          ASSET_ID="$(python3 -c 'import json; print(json.load(open("/tmp/assets.json"))["items"][1]["id"])')"
+          SITE_ID="$(python3 -c 'import json; print(json.load(open("/tmp/assets.json"))["items"][1]["siteId"])')"
+          echo "ASSET_ID=$ASSET_ID SITE_ID=$SITE_ID"
+
+          # scope engineer to site
+          curl -fsS -X PUT -H "X-Org-Id: ${ORG_ID}" -H "Content-Type: application/json" \
+            -d "{\"siteIds\":[\"${SITE_ID}\"],\"assetIds\":[]}" \
+            "http://127.0.0.1:8091/user-scopes/${ENGINEER_ID}" | tee /tmp/scope.json
+          echo
+
+          # pick an open emergency WO on this asset or create one
+          curl -sS -H "X-Org-Id: ${ORG_ID}" "http://127.0.0.1:8092/work-orders?limit=100" >/tmp/wos.json
+          WO_ID="$(python3 - <<PY
+          import json
+          items=json.load(open("/tmp/wos.json"))
+          if isinstance(items, dict): items=items.get("items") or []
+          for w in items:
+            if w.get("assetId")=="${ASSET_ID}" and w.get("status") in ("new","in_progress","assigned"):
+              print(w["id"]); break
+          PY
+          )"
+          if [[ -z "${WO_ID}" ]]; then
+            DUE="$(date -u +%F)"
+            CODE="$(curl -sS -o /tmp/wo.json -w '%{http_code}' -X POST \
+              -H "X-Org-Id: ${ORG_ID}" -H "X-User-Id: seed-check" \
+              -H "X-Caller-Features: tickets,board" \
+              -H "Content-Type: application/json" \
+              -d "{\"type\":\"emergency\",\"title\":\"Mentor docs check\",\"assetId\":\"${ASSET_ID}\",\"siteId\":\"${SITE_ID}\",\"dueAt\":\"${DUE}\",\"description\":\"Проверка наставника после seed docs\"}" \
+              http://127.0.0.1:8092/work-orders)"
+            echo "CREATE_WO=$CODE $(cat /tmp/wo.json)"
+            [[ "$CODE" == "200" || "$CODE" == "201" ]]
+            WO_ID="$(python3 -c 'import json; print(json.load(open("/tmp/wo.json"))["id"])')"
+          fi
+          echo "WO_ID=$WO_ID"
+
+          cd /opt/dashboard-service/deploy
+          docker compose exec -T dashboard-postgres psql -U dashboard -d dashboard -v ON_ERROR_STOP=1 -c \
+            "UPDATE work_orders SET assignee_id = '${ENGINEER_ID}' WHERE id = '${WO_ID}'; SELECT id, title, assignee_id, asset_id FROM work_orders WHERE id = '${WO_ID}';"
+
+          echo "== list_asset_documents via document-mcp =="
+          curl -sS -X POST -H "X-Org-Id: ${ORG_ID}" -H "Content-Type: application/json" \
+            -d "{\"name\":\"list_asset_documents\",\"arguments\":{\"assetId\":\"${ASSET_ID}\"}}" \
+            http://127.0.0.1:8097/mcp/tools/call | tee /tmp/mcp.json | head -c 800
+          echo
+          python3 - <<'PY'
+          import json
+          raw=open("/tmp/mcp.json").read()
+          data=json.loads(raw)
+          text=json.dumps(data, ensure_ascii=False)
+          assert "document" in text.lower() or "id" in text
+          # empty list would be short
+          assert len(text) > 100, text
+          print("MCP_DOCS_OK chars=", len(text))
+          PY
+
+          echo "== mentor =="
+          CODE="$(curl -sS -o /tmp/mentor.json -w '%{http_code}' -X POST \
+            -H "X-Org-Id: ${ORG_ID}" -H "X-User-Id: ${ENGINEER_ID}" \
+            -H "Content-Type: application/json" \
+            -d "{\"workOrderId\":\"${WO_ID}\",\"message\":\"Что нужно сделать в заявке? Кратко по документам.\"}" \
+            http://127.0.0.1:8095/ai/mentor)"
+          echo "MENTOR_HTTP=$CODE"
+          head -c 600 /tmp/mentor.json; echo
+          [[ "$CODE" == "200" ]]
+          python3 - <<'PY'
+          import json,sys
+          t=open("/tmp/mentor.json").read()
+          # may be {"reply":"..."} or plain string
+          try:
+            j=json.loads(t)
+            reply=j.get("reply") or j.get("message") or j.get("answer") or str(j)
+          except Exception:
+            reply=t
+          print("REPLY_CHARS", len(reply))
+          low=reply.lower()
+          bad=("отсутствуют" in low and "документ" in low) or ("нет информации" in low)
+          assert not bad, reply
+          print("MENTOR_OK")
+          PY
+          EOF
