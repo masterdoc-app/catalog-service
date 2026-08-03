@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       org_id:
-        description: Org to seed
+        description: Org to seed (equipment from documents)
         required: true
         default: "382715225649971203"
 
@@ -12,7 +12,7 @@ jobs:
   seed:
     runs-on: ubuntu-latest
     steps:
-      - name: Replace org assets with four demo units
+      - name: Replace org demo set via documents
         env:
           HOST: ${{ secrets.DEPLOY_HOST }}
           USER: ${{ secrets.DEPLOY_USER }}
@@ -25,12 +25,32 @@ jobs:
           ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no "${USER}@${HOST}" \
             ORG_ID="$ORG_ID" bash -s <<'EOF'
           set -euo pipefail
+
+          echo "==> Clear work orders (dashboard)"
+          CODE="$(curl -sS -o /tmp/wo-clear.json -w '%{http_code}' -X DELETE \
+            "http://127.0.0.1:8092/internal/orgs/${ORG_ID}/work-orders")"
+          echo "DELETE work-orders -> $CODE $(cat /tmp/wo-clear.json 2>/dev/null || true)"
+          [[ "$CODE" == "200" ]] || exit 1
+
+          echo "==> Clear PPR / maintenance maps"
+          if [[ -d /opt/maintenance-service/deploy ]]; then
+            cd /opt/maintenance-service/deploy
+            docker compose exec -T maintenance-postgres \
+              psql -U maintenance -d maintenance -v ON_ERROR_STOP=1 \
+              -c "DELETE FROM maintenance_maps WHERE org_id = '${ORG_ID}';" \
+              | tee /tmp/ppr-clear.txt
+          else
+            echo "WARN: /opt/maintenance-service/deploy missing — skip PPR SQL clear"
+          fi
+
+          echo "==> List sites"
           curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/sites >/tmp/sites.json
           SITE_ID="$(python3 -c 'import json; print((json.load(open("/tmp/sites.json")).get("items") or [{"id":"ceh-1"}])[0]["id"])')"
           echo "SITE_ID=$SITE_ID"
 
+          echo "==> Delete existing assets"
           curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/assets >/tmp/assets.json
-          python3 - <<'PY' >/tmp/to_delete.txt
+          python3 - <<'PY' >/tmp/to_delete_assets.txt
           import json
           for a in json.load(open("/tmp/assets.json")).get("items") or []:
               print(a["id"])
@@ -39,27 +59,121 @@ jobs:
             [[ -z "$id" ]] && continue
             CODE="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
               -H "X-Org-Id: ${ORG_ID}" "http://127.0.0.1:8091/assets/${id}")"
-            echo "DELETE $id -> $CODE"
-          done < /tmp/to_delete.txt
+            echo "DELETE asset $id -> $CODE"
+          done < /tmp/to_delete_assets.txt
 
-          seed() {
-            local name="$1"
-            CODE="$(curl -sS -o /tmp/asset.json -w '%{http_code}' \
-              -X POST -H "X-Org-Id: ${ORG_ID}" -H "Content-Type: application/json" \
-              -d "{\"name\":\"${name}\",\"siteId\":\"${SITE_ID}\",\"source\":\"manual\",\"asDraft\":false}" \
-              http://127.0.0.1:8091/assets)"
-            echo "POST $name -> $CODE"
-          }
-          seed "Компрессор Hitachi Oil-Free"
-          seed "Компрессор Ingersoll Rand R-Series"
-          seed "Насосный агрегат НЦВ-80"
-          seed "ПЧ Danfoss VLT AutomationDrive"
+          echo "==> Delete existing documents"
+          curl -sS -H "X-Org-Id: ${ORG_ID}" \
+            "http://127.0.0.1:8093/documents?folder=${ORG_ID}" >/tmp/docs.json
+          python3 - <<'PY' >/tmp/to_delete_docs.txt
+          import json
+          for d in json.load(open("/tmp/docs.json")).get("items") or []:
+              print(d["id"])
+          PY
+          while read -r id; do
+            [[ -z "$id" ]] && continue
+            CODE="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+              -H "X-Org-Id: ${ORG_ID}" "http://127.0.0.1:8093/documents/${id}")"
+            echo "DELETE doc $id -> $CODE"
+          done < /tmp/to_delete_docs.txt
 
+          echo "==> Create documents + assets (equipment from docs)"
+          ORG_ID="$ORG_ID" SITE_ID="$SITE_ID" python3 - <<'PY'
+          import json, os, urllib.request
+
+          org = os.environ["ORG_ID"]
+          site = os.environ["SITE_ID"]
+          units = [
+              (
+                  "Компрессор Hitachi Oil-Free",
+                  "hitachi-oil-free-passport.pdf",
+                  "Паспорт / руководство: Компрессор Hitachi Oil-Free\n"
+                  "Модель: DSP-37V\nНазначение: сжатый воздух безмасляный\n"
+                  "Интервал ТО: 2000 моточасов\nПроизводитель: Hitachi Industrial",
+              ),
+              (
+                  "Компрессор Ingersoll Rand R-Series",
+                  "ingersoll-rand-r-series-passport.pdf",
+                  "Паспорт / руководство: Компрессор Ingersoll Rand R-Series\n"
+                  "Модель: R75n\nНазначение: винтовой компрессор\n"
+                  "Интервал ТО: 4000 моточасов\nПроизводитель: Ingersoll Rand",
+              ),
+              (
+                  "Насосный агрегат НЦВ-80",
+                  "ncv-80-passport.pdf",
+                  "Паспорт / руководство: Насосный агрегат НЦВ-80\n"
+                  "Модель: НЦВ-80\nНазначение: центробежный насос\n"
+                  "Интервал ТО: 3000 моточасов\nПроизводитель: отечественный",
+              ),
+              (
+                  "ПЧ Danfoss VLT AutomationDrive",
+                  "danfoss-vlt-passport.pdf",
+                  "Паспорт / руководство: ПЧ Danfoss VLT AutomationDrive\n"
+                  "Модель: FC-302\nНазначение: частотный преобразователь\n"
+                  "Интервал ТО: ежегодный осмотр\nПроизводитель: Danfoss",
+              ),
+          ]
+
+          def http(method, url, body=None):
+              data = None if body is None else json.dumps(body, ensure_ascii=False).encode()
+              req = urllib.request.Request(
+                  url,
+                  data=data,
+                  method=method,
+                  headers={
+                      "X-Org-Id": org,
+                      "X-User-Id": "seed-demo-assets",
+                      "Content-Type": "application/json",
+                  },
+              )
+              with urllib.request.urlopen(req) as r:
+                  raw = r.read()
+                  return r.status, (json.loads(raw) if raw else None)
+
+          created = []
+          for name, filename, text in units:
+              st, doc = http(
+                  "POST",
+                  "http://127.0.0.1:8093/documents/from-text",
+                  {"text": text, "filename": filename},
+              )
+              assert st == 201, (name, st, doc)
+              doc_id = doc["id"]
+              print(f"DOC {name} -> {doc_id}")
+              st, asset = http(
+                  "POST",
+                  "http://127.0.0.1:8091/assets",
+                  {
+                      "name": name,
+                      "siteId": site,
+                      "source": "manual",
+                      "asDraft": False,
+                      "documentIds": [doc_id],
+                      "description": text.split("\n", 1)[0],
+                  },
+              )
+              assert st in (200, 201), (name, st, asset)
+              print(
+                  f"ASSET {asset.get('name')} status={asset.get('status')} "
+                  f"docs={asset.get('documentIds')}"
+              )
+              created.append(asset)
+
+          print(f"TOTAL={len(created)}")
+          missing = [a["name"] for a in created if not a.get("documentIds")]
+          if missing:
+              raise SystemExit(f"assets without documents: {missing}")
+          PY
+
+          echo "==> Verify"
           curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/assets | python3 -c '
           import json,sys
           items=json.load(sys.stdin).get("items") or []
           print("TOTAL="+str(len(items)))
           for a in items:
-              print("-", a.get("status"), a.get("name"))
+              docs=a.get("documentIds") or []
+              print("-", a.get("status"), a.get("name"), "docs="+str(len(docs)), docs)
+              if not docs:
+                  raise SystemExit("asset missing documentIds: "+a.get("name",""))
           '
           EOF

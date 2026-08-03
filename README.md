@@ -28,7 +28,9 @@ Integration tests use Testcontainers and are skipped when Docker is not installe
 
 Pushes to `main` run tests and deploy Compose to `/opt/catalog-service`.
 
-After the **first** Postgres deploy (empty database), seed demo equipment once:
+Seed demo equipment **from documents** (clears Demo work orders + PPR maps,
+replaces assets, uploads passport PDFs via `POST /documents/from-text`, creates
+active assets with `documentIds`):
 
 ```bash
 gh workflow run seed-demo-assets.yml -f org_id=382715225649971203
