@@ -20,6 +20,7 @@ class JdbcAssetStore(private val dataSource: DataSource) {
     fun create(orgId: String, req: CreateAssetRequest): Asset {
         require(req.name.isNotBlank()) { "name required" }
         require(req.siteId.isNotBlank()) { "siteId required" }
+        require(req.documentIds.isNotEmpty()) { "document required" }
         require(req.documentIds.size <= 1) { "at most one document" }
         requireDocumentsAvailable(orgId, req.documentIds, null)
         val source = req.source
