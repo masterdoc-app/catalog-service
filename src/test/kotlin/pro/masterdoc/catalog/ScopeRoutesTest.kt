@@ -45,12 +45,13 @@ class ScopeRoutesTest {
         orgId: String,
         siteId: String,
         name: String = "Asset",
+        documentId: String = "doc-${java.util.UUID.randomUUID()}",
     ): String {
         val create =
             post("/assets") {
                 header("X-Org-Id", orgId)
                 contentType(ContentType.Application.Json)
-                setBody("""{"name":"$name","siteId":"$siteId","asDraft":false}""")
+                setBody("""{"name":"$name","siteId":"$siteId","asDraft":false,"documentIds":["$documentId"]}""")
             }
         return json.parseToJsonElement(create.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
     }

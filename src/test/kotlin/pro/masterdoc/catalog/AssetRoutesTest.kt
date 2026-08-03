@@ -72,7 +72,7 @@ class AssetRoutesTest {
             client.post("/assets") {
                 header("X-Org-Id", "org-1")
                 contentType(ContentType.Application.Json)
-                setBody("""{"name":"A","siteId":"s","source":"manual","asDraft":false}""")
+                setBody("""{"name":"A","siteId":"s","source":"manual","asDraft":false,"documentIds":["doc-a"]}""")
             }
         val id = json.parseToJsonElement(create.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
         val confirm = client.post("/assets/$id/confirm") { header("X-Org-Id", "org-1") }
@@ -86,12 +86,12 @@ class AssetRoutesTest {
         client.post("/assets") {
             header("X-Org-Id", "org-a")
             contentType(ContentType.Application.Json)
-            setBody("""{"name":"A","siteId":"s"}""")
+            setBody("""{"name":"A","siteId":"s","documentIds":["doc-a"]}""")
         }
         client.post("/assets") {
             header("X-Org-Id", "org-b")
             contentType(ContentType.Application.Json)
-            setBody("""{"name":"B","siteId":"s"}""")
+            setBody("""{"name":"B","siteId":"s","documentIds":["doc-b"]}""")
         }
         val list = client.get("/assets") { header("X-Org-Id", "org-a") }
         assertTrue(list.bodyAsText().contains("\"A\""))
@@ -105,7 +105,7 @@ class AssetRoutesTest {
             client.post("/assets") {
                 header("X-Org-Id", "org-1")
                 contentType(ContentType.Application.Json)
-                setBody("""{"name":"Draft","siteId":"s","source":"ai_generated"}""")
+                setBody("""{"name":"Draft","siteId":"s","source":"ai_generated","documentIds":["doc-draft"]}""")
             }
         val id = json.parseToJsonElement(create.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
 
@@ -123,7 +123,7 @@ class AssetRoutesTest {
             client.post("/assets") {
                 header("X-Org-Id", "org-1")
                 contentType(ContentType.Application.Json)
-                setBody("""{"name":"Active","siteId":"s","source":"manual","asDraft":false}""")
+                setBody("""{"name":"Active","siteId":"s","source":"manual","asDraft":false,"documentIds":["doc-active"]}""")
             }
         val id = json.parseToJsonElement(create.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
 
@@ -179,7 +179,7 @@ class AssetRoutesTest {
             client.post("/assets") {
                 header("X-Org-Id", "org-1")
                 contentType(ContentType.Application.Json)
-                setBody("""{"name":"Second","siteId":"site-1"}""")
+                setBody("""{"name":"Second","siteId":"site-1","documentIds":["doc-second"]}""")
             }
         val id = json.parseToJsonElement(create.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
         val patch =
@@ -199,7 +199,7 @@ class AssetRoutesTest {
             client.post("/assets") {
                 header("X-Org-Id", "org-a")
                 contentType(ContentType.Application.Json)
-                setBody("""{"name":"Secret","siteId":"s"}""")
+                setBody("""{"name":"Secret","siteId":"s","documentIds":["doc-secret"]}""")
             }
         val id = json.parseToJsonElement(create.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
 
@@ -214,7 +214,7 @@ class AssetRoutesTest {
             client.post("/assets") {
                 header("X-Org-Id", "org-1")
                 contentType(ContentType.Application.Json)
-                setBody("""{"name":"AI","siteId":"s","source":"ai_generated","asDraft":false}""")
+                setBody("""{"name":"AI","siteId":"s","source":"ai_generated","asDraft":false,"documentIds":["doc-ai"]}""")
             }
         assertEquals(HttpStatusCode.Created, create.status)
         assertEquals(
@@ -231,7 +231,7 @@ class AssetRoutesTest {
                 header("X-Org-Id", "org-1")
                 contentType(ContentType.Application.Json)
                 setBody(
-                    """{"name":"Кран-балка","siteId":"site-1","category":"lifting","description":"Грузоподъёмная балка","source":"ai_generated"}""",
+                    """{"name":"Кран-балка","siteId":"site-1","category":"lifting","description":"Грузоподъёмная балка","source":"ai_generated","documentIds":["doc-crane"]}""",
                 )
             }
         assertEquals(HttpStatusCode.Created, create.status)
@@ -247,7 +247,7 @@ class AssetRoutesTest {
             client.post("/assets") {
                 header("X-Org-Id", "org-1")
                 contentType(ContentType.Application.Json)
-                setBody("""{"name":"Черновик","siteId":"site-1","description":"Старое описание"}""")
+                setBody("""{"name":"Черновик","siteId":"site-1","description":"Старое описание","documentIds":["doc-patch"]}""")
             }
         val id = json.parseToJsonElement(create.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
 
@@ -326,6 +326,32 @@ class AssetRoutesTest {
     }
 
     @Test
+    fun createRejectsMissingDocumentIds() = withApplication {
+        client.ensureSite("org-1")
+        val create =
+            client.post("/assets") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody("""{"name":"Компрессор","siteId":"site-1"}""")
+            }
+        assertEquals(HttpStatusCode.BadRequest, create.status)
+        assertTrue(create.bodyAsText().contains("document required"))
+    }
+
+    @Test
+    fun createRejectsEmptyDocumentIds() = withApplication {
+        client.ensureSite("org-1")
+        val create =
+            client.post("/assets") {
+                header("X-Org-Id", "org-1")
+                contentType(ContentType.Application.Json)
+                setBody("""{"name":"Компрессор","siteId":"site-1","documentIds":[]}""")
+            }
+        assertEquals(HttpStatusCode.BadRequest, create.status)
+        assertTrue(create.bodyAsText().contains("document required"))
+    }
+
+    @Test
     fun createWithUnknownSiteFails() = withApplication {
         val create =
             client.post("/assets") {
@@ -345,7 +371,7 @@ class AssetRoutesTest {
             client.post("/assets") {
                 header("X-Org-Id", "org-1")
                 contentType(ContentType.Application.Json)
-                setBody("""{"name":"Pump","siteId":"a","asDraft":false}""")
+                setBody("""{"name":"Pump","siteId":"a","asDraft":false,"documentIds":["doc-pump"]}""")
             }
         val id = json.parseToJsonElement(create.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
         val moved =

@@ -31,7 +31,7 @@ class AssetPersistenceTest {
             val site = JdbcSiteStore(ds).create(orgId, CreateSiteRequest(name = "Цех 1"))
             val asset = JdbcAssetStore(ds).create(
                 orgId,
-                CreateAssetRequest(name = "Компрессор", siteId = site.id),
+                CreateAssetRequest(name = "Компрессор", siteId = site.id, documentIds = listOf("doc-persist-1")),
             )
             assetId = asset.id
         }
@@ -51,7 +51,7 @@ class AssetPersistenceTest {
             val store = JdbcAssetStore(ds)
             val asset = store.create(
                 orgId,
-                CreateAssetRequest(name = "Компрессор", siteId = site.id, asDraft = false),
+                CreateAssetRequest(name = "Компрессор", siteId = site.id, asDraft = false, documentIds = listOf("doc-qr-active-1")),
             )
 
             val token = assertNotNull(asset.qrToken)
@@ -71,7 +71,7 @@ class AssetPersistenceTest {
             val store = JdbcAssetStore(ds)
             val asset = store.create(
                 orgId,
-                CreateAssetRequest(name = "Черновик", siteId = site.id),
+                CreateAssetRequest(name = "Черновик", siteId = site.id, documentIds = listOf("doc-qr-draft-1")),
             )
 
             assertNull(asset.qrToken)
@@ -90,7 +90,7 @@ class AssetPersistenceTest {
             val store = JdbcAssetStore(ds)
             val asset = store.create(
                 orgId,
-                CreateAssetRequest(name = "Компрессор", siteId = site.id, asDraft = false),
+                CreateAssetRequest(name = "Компрессор", siteId = site.id, asDraft = false, documentIds = listOf("doc-qr-ensure-1")),
             )
 
             val originalToken = assertNotNull(asset.qrToken)
@@ -108,7 +108,7 @@ class AssetPersistenceTest {
             val store = JdbcAssetStore(ds)
             val asset = store.create(
                 orgId,
-                CreateAssetRequest(name = "Компрессор", siteId = site.id, asDraft = false),
+                CreateAssetRequest(name = "Компрессор", siteId = site.id, asDraft = false, documentIds = listOf("doc-qr-lazy-ensure-1")),
             )
             ds.connection.use { connection ->
                 connection.prepareStatement("UPDATE assets SET qr_token = NULL WHERE org_id = ? AND id = ?").use { statement ->
@@ -134,7 +134,7 @@ class AssetPersistenceTest {
             val store = JdbcAssetStore(ds)
             val asset = store.create(
                 orgId,
-                CreateAssetRequest(name = "Черновик", siteId = site.id),
+                CreateAssetRequest(name = "Черновик", siteId = site.id, documentIds = listOf("doc-qr-draft-ensure-1")),
             )
 
             assertFailsWith<IllegalArgumentException> {
@@ -153,7 +153,7 @@ class AssetPersistenceTest {
             val store = JdbcAssetStore(ds)
             val asset = store.create(
                 orgId,
-                CreateAssetRequest(name = "Насос", siteId = site.id, asDraft = false),
+                CreateAssetRequest(name = "Насос", siteId = site.id, asDraft = false, documentIds = listOf("doc-qr-status-1")),
             )
             val token = assertNotNull(asset.qrToken)
 
@@ -179,15 +179,15 @@ class AssetPersistenceTest {
             val store = JdbcAssetStore(ds)
             val first = store.create(
                 orgId,
-                CreateAssetRequest(name = "Насос 1", siteId = site.id, asDraft = false),
+                CreateAssetRequest(name = "Насос 1", siteId = site.id, asDraft = false, documentIds = listOf("doc-pump-1")),
             )
             val second = store.create(
                 orgId,
-                CreateAssetRequest(name = "Насос 2", siteId = site.id, asDraft = false),
+                CreateAssetRequest(name = "Насос 2", siteId = site.id, asDraft = false, documentIds = listOf("doc-pump-2")),
             )
             val otherOrgAsset = store.create(
                 "other-org",
-                CreateAssetRequest(name = "Насос 3", siteId = otherSite.id, asDraft = false),
+                CreateAssetRequest(name = "Насос 3", siteId = otherSite.id, asDraft = false, documentIds = listOf("doc-pump-3")),
             )
             val token = assertNotNull(first.qrToken)
 
