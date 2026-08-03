@@ -1,0 +1,171 @@
+name: Smoke QR Full Path
+
+# Saves QR PDF, creates emergency WO, scopes engineer to that asset,
+# resolves by-qr, and asserts scoped WO list only contains that equipment.
+on:
+  workflow_dispatch:
+    inputs:
+      org_id:
+        required: true
+        default: "383177088934346755"
+      engineer_user_id:
+        description: Engineer user id for scope + by-qr
+        required: true
+        default: "383177205334671363"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Full QR path on VPS
+        id: path
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          ORG_ID: ${{ inputs.org_id }}
+          ENGINEER_ID: ${{ inputs.engineer_user_id }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/deploy_key
+          printf '%s\n' "$KEY" > /tmp/deploy_key
+          mkdir -p /tmp/qr-smoke
+          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no "${USER}@${HOST}" \
+            "ORG_ID=${ORG_ID} ENGINEER_ID=${ENGINEER_ID}" bash -s <<'EOF' | tee /tmp/qr-smoke/remote.log
+          set -euo pipefail
+          ASSETS="$(curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/assets)"
+          eval "$(printf '%s' "$ASSETS" | python3 -c '
+          import json,sys,shlex
+          items=json.load(sys.stdin).get("items") or []
+          active=[a for a in items if a.get("status")=="active"]
+          assert active, "no active assets"
+          a=active[0]
+          others=[x for x in active if x["id"]!=a["id"]]
+          print("ASSET_ID="+shlex.quote(a["id"]))
+          print("SITE_ID="+shlex.quote(a["siteId"]))
+          print("ASSET_NAME="+shlex.quote(a.get("name") or "Оборудование"))
+          print("QR_TOKEN="+shlex.quote(a.get("qrToken") or ""))
+          print("OTHER_ASSET_ID="+shlex.quote(others[0]["id"] if others else ""))
+          print("OTHER_SITE_ID="+shlex.quote(others[0]["siteId"] if others else ""))
+          ')"
+          if [[ -z "$QR_TOKEN" ]]; then
+            # ensure via PDF endpoint
+            curl -fsS -H "X-Org-Id: ${ORG_ID}" -H "X-User-Id: smoke-ops" \
+              "http://127.0.0.1:8091/assets/${ASSET_ID}/qr.pdf" -o /tmp/asset-qr.pdf
+            ASSETS="$(curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/assets)"
+            QR_TOKEN="$(printf '%s' "$ASSETS" | python3 -c '
+            import json,sys
+            items=json.load(sys.stdin).get("items") or []
+            a=next(x for x in items if x["id"]=="'"$ASSET_ID"'")
+            t=a.get("qrToken") or ""
+            assert t, "qrToken still missing after PDF"
+            print(t)
+            ')"
+          else
+            curl -fsS -H "X-Org-Id: ${ORG_ID}" -H "X-User-Id: smoke-ops" \
+              "http://127.0.0.1:8091/assets/${ASSET_ID}/qr.pdf" -o /tmp/asset-qr.pdf
+          fi
+          test "$(dd if=/tmp/asset-qr.pdf bs=5 count=1 2>/dev/null)" = "%PDF-"
+          PDF_BYTES="$(wc -c < /tmp/asset-qr.pdf)"
+          test "$PDF_BYTES" -gt 100
+          echo "PDF_BYTES=$PDF_BYTES"
+          echo "ASSET_ID=$ASSET_ID"
+          echo "ASSET_NAME=$ASSET_NAME"
+          echo "QR_TOKEN=$QR_TOKEN"
+          echo "QR_URL=https://app.fixaverse.ru/#/qr/${QR_TOKEN}"
+
+          DUE="$(date -u +%F)"
+          TITLE="QR smoke $(date -u +%H%M%S)"
+          CODE="$(curl -sS -o /tmp/wo-target.json -w "%{http_code}" -X POST \
+            -H "X-Org-Id: ${ORG_ID}" -H "X-User-Id: smoke-requester" \
+            -H "X-Caller-Features: tickets,board" \
+            -H "Content-Type: application/json" \
+            -d "{\"type\":\"emergency\",\"title\":\"${TITLE}\",\"assetId\":\"${ASSET_ID}\",\"siteId\":\"${SITE_ID}\",\"dueAt\":\"${DUE}\",\"description\":\"Создано по QR smoke\"}" \
+            http://127.0.0.1:8092/work-orders)"
+          echo "CREATE_TARGET=$CODE"
+          [[ "$CODE" == "200" || "$CODE" == "201" ]]
+          WO_ID="$(python3 -c 'import json; print(json.load(open("/tmp/wo-target.json"))["id"])')"
+          echo "WO_ID=$WO_ID"
+
+          if [[ -n "$OTHER_ASSET_ID" ]]; then
+            CODE2="$(curl -sS -o /tmp/wo-other.json -w "%{http_code}" -X POST \
+              -H "X-Org-Id: ${ORG_ID}" -H "X-User-Id: smoke-requester" \
+              -H "X-Caller-Features: tickets,board" \
+              -H "Content-Type: application/json" \
+              -d "{\"type\":\"emergency\",\"title\":\"Other asset distractor\",\"assetId\":\"${OTHER_ASSET_ID}\",\"siteId\":\"${OTHER_SITE_ID}\",\"dueAt\":\"${DUE}\",\"description\":\"out of engineer QR scope\"}" \
+              http://127.0.0.1:8092/work-orders)"
+            echo "CREATE_OTHER=$CODE2"
+            [[ "$CODE2" == "200" || "$CODE2" == "201" ]]
+            OTHER_WO="$(python3 -c 'import json; print(json.load(open("/tmp/wo-other.json"))["id"])')"
+            echo "OTHER_WO=$OTHER_WO"
+          else
+            echo "OTHER_ASSET_ID= (single active asset — scope check still asserts target WO visible)"
+            OTHER_WO=""
+          fi
+
+          # Scope engineer to target asset only
+          curl -fsS -X PUT \
+            -H "X-Org-Id: ${ORG_ID}" -H "Content-Type: application/json" \
+            -d "{\"siteIds\":[],\"assetIds\":[\"${ASSET_ID}\"]}" \
+            "http://127.0.0.1:8091/user-scopes/${ENGINEER_ID}" | tee /tmp/scope.json
+          python3 -m json.tool /tmp/scope.json >/dev/null
+
+          # Engineer resolves QR (scan)
+          RESOLVE="$(curl -sS -o /tmp/by-qr.json -w "%{http_code}" \
+            -H "X-Org-Id: ${ORG_ID}" -H "X-User-Id: ${ENGINEER_ID}" \
+            -H "X-Scope-Filter: 1" \
+            "http://127.0.0.1:8091/assets/by-qr/${QR_TOKEN}")"
+          echo "BY_QR=$RESOLVE"
+          [[ "$RESOLVE" == "200" ]]
+          python3 -c '
+          import json
+          d=json.load(open("/tmp/by-qr.json"))
+          assert d["assetId"]=="'"$ASSET_ID"'", d
+          assert d["name"], d
+          print("RESOLVED_NAME="+d["name"])
+          '
+
+          # Engineer WO list with scope — only target asset
+          LIST="$(curl -sS -o /tmp/wo-list.json -w "%{http_code}" \
+            -H "X-Org-Id: ${ORG_ID}" -H "X-User-Id: ${ENGINEER_ID}" \
+            -H "X-Caller-Features: engineer,board" \
+            -H "X-Scope-Filter: 1" \
+            "http://127.0.0.1:8092/work-orders")"
+          echo "LIST=$LIST"
+          [[ "$LIST" == "200" ]]
+          python3 -c '
+          import json,os
+          items=json.load(open("/tmp/wo-list.json")).get("items") or json.load(open("/tmp/wo-list.json"))
+          if isinstance(items, dict):
+            items=items.get("items") or []
+          target="'"$ASSET_ID"'"
+          other="'"$OTHER_ASSET_ID"'"
+          ids={i.get("id") for i in items}
+          assets={i.get("assetId") for i in items}
+          assert "'"$WO_ID"'" in ids, ("missing target WO", ids)
+          assert assets <= {target} or all(a==target for a in assets if a), ("leak", assets)
+          if other:
+            assert all(i.get("assetId")==target for i in items), ("scoped list leaked other asset", assets)
+            assert "'"$OTHER_WO"'" not in ids, ("other WO visible to scoped engineer", ids)
+          print("SCOPED_COUNT="+str(len(items)))
+          print("SCOPED_ASSETS="+",".join(sorted(a for a in assets if a)))
+          '
+
+          # Expose base64 PDF for artifact step via local file copy
+          base64 /tmp/asset-qr.pdf | head -c 20 >/dev/null
+          echo "REMOTE_OK=1"
+          EOF
+          # Copy PDF from remote
+          scp -i /tmp/deploy_key -o StrictHostKeyChecking=no \
+            "${USER}@${HOST}:/tmp/asset-qr.pdf" /tmp/qr-smoke/hitachi-qr.pdf
+          test -s /tmp/qr-smoke/hitachi-qr.pdf
+          test "$(dd if=/tmp/qr-smoke/hitachi-qr.pdf bs=5 count=1 2>/dev/null)" = "%PDF-"
+          # Extract summary lines
+          rg -n "ASSET_|QR_|WO_|BY_QR|SCOPED_|RESOLVED_|PDF_|CREATE_|OTHER_|REMOTE_OK" /tmp/qr-smoke/remote.log || true
+
+      - name: Upload QR PDF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-hitachi-qr-pdf
+          path: /tmp/qr-smoke/hitachi-qr.pdf
+          if-no-files-found: error
