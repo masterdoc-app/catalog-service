@@ -33,11 +33,13 @@ jobs:
           [[ "$CODE" == "200" ]] || exit 1
 
           echo "==> Clear PPR / maintenance maps"
+          # IMPORTANT: do not let `docker compose exec` inherit stdin from `bash -s`
+          # (it would consume the rest of this remote script).
           if [[ -d /opt/maintenance-service/deploy ]]; then
-            cd /opt/maintenance-service/deploy
-            docker compose exec -T maintenance-postgres \
-              psql -U maintenance -d maintenance -v ON_ERROR_STOP=1 \
-              -c "DELETE FROM maintenance_maps WHERE org_id = '${ORG_ID}';" \
+            printf '%s\n' "DELETE FROM maintenance_maps WHERE org_id = '${ORG_ID}';" \
+              | docker compose -f /opt/maintenance-service/deploy/docker-compose.yml \
+                exec -T maintenance-postgres \
+                psql -U maintenance -d maintenance -v ON_ERROR_STOP=1 \
               | tee /tmp/ppr-clear.txt
           else
             echo "WARN: /opt/maintenance-service/deploy missing — skip PPR SQL clear"
