@@ -39,5 +39,5 @@ jobs:
           curl -fsS -H "X-Org-Id: \$ORG_ID" -H "X-User-Id: smoke-ops" \
             "http://127.0.0.1:8091/assets/\${ASSET_ID}/qr.pdf" -o /tmp/asset-qr.pdf
           test "\$(dd if=/tmp/asset-qr.pdf bs=5 count=1 2>/dev/null)" = "%PDF-"
-          file /tmp/asset-qr.pdf
+          test "\$(wc -c < /tmp/asset-qr.pdf)" -gt 100
           EOF
