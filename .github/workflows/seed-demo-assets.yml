@@ -167,15 +167,80 @@ jobs:
               raise SystemExit(f"assets without documents: {missing}")
           PY
 
-          echo "==> Verify"
-          curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/assets | python3 -c '
-          import json,sys
-          items=json.load(sys.stdin).get("items") or []
-          print("TOTAL="+str(len(items)))
+          echo "==> Verify assets"
+          curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/assets >/tmp/assets-final.json
+          python3 - <<'PY'
+          import json, sys
+          items = json.load(open("/tmp/assets-final.json")).get("items") or []
+          print("TOTAL=" + str(len(items)))
           for a in items:
-              docs=a.get("documentIds") or []
-              print("-", a.get("status"), a.get("name"), "docs="+str(len(docs)), docs)
+              docs = a.get("documentIds") or []
+              print("-", a.get("status"), a.get("name"), "docs=" + str(len(docs)), docs)
               if not docs:
-                  raise SystemExit("asset missing documentIds: "+a.get("name",""))
-          '
+                  raise SystemExit("asset missing documentIds: " + a.get("name", ""))
+          if len(items) != 4:
+              raise SystemExit("expected 4 demo assets")
+          PY
+
+          echo "==> Seed PPR maps (one active map per asset)"
+          ORG_ID="$ORG_ID" python3 - <<'PY'
+          import json, os, urllib.request
+
+          org = os.environ["ORG_ID"]
+          assets = json.load(open("/tmp/assets-final.json")).get("items") or []
+
+          def http(method, url, body=None):
+              data = None if body is None else json.dumps(body, ensure_ascii=False).encode()
+              headers = {"X-Org-Id": org, "X-User-Id": "seed-demo-assets"}
+              if body is not None:
+                  headers["Content-Type"] = "application/json"
+              req = urllib.request.Request(url, data=data, method=method, headers=headers)
+              with urllib.request.urlopen(req) as r:
+                  raw = r.read()
+                  return r.status, (json.loads(raw) if raw else None)
+
+          for a in assets:
+              name = a["name"]
+              body = {
+                  "assetId": a["id"],
+                  "title": f"Карта ТО — {name}",
+                  "source": "manual",
+                  "items": [
+                      {
+                          "title": "Осмотр",
+                          "kind": "inspection",
+                          "interval": {"every": 30, "unit": "days"},
+                          "criticality": "medium",
+                      },
+                      {
+                          "title": "ТО",
+                          "kind": "service",
+                          "interval": {"every": 90, "unit": "days"},
+                          "criticality": "high",
+                      },
+                  ],
+              }
+              st, mp = http("POST", "http://127.0.0.1:8098/maintenance-maps", body)
+              assert st in (200, 201), (name, st, mp)
+              map_id = mp["id"]
+              st, conf = http("POST", f"http://127.0.0.1:8098/maintenance-maps/{map_id}/confirm")
+              assert st in (200, 201), (name, map_id, st, conf)
+              print(f"PPR {name} -> {map_id} status={conf.get('status')}")
+          PY
+
+          echo "==> Seed manager-report work orders (Demo showcase)"
+          BODY="$(python3 - <<'PY'
+          import json
+          items = json.load(open("/tmp/assets-final.json")).get("items") or []
+          site = items[0]["siteId"]
+          print(json.dumps({"siteId": site, "assetIds": [a["id"] for a in items]}))
+          PY
+          )"
+          CODE="$(curl -sS -o /tmp/wo-seed.json -w '%{http_code}' \
+            -X POST -H "Content-Type: application/json" \
+            -d "$BODY" \
+            "http://127.0.0.1:8092/internal/orgs/${ORG_ID}/seed-manager-reports")"
+          echo "POST seed-manager-reports -> $CODE $(cat /tmp/wo-seed.json)"
+          [[ "$CODE" == "200" ]] || exit 1
+          python3 -c 'import json; r=json.load(open("/tmp/wo-seed.json")); print(f"WO deleted={r.get(\"deleted\")} created={r.get(\"created\")}")'
           EOF

@@ -28,12 +28,13 @@ Integration tests use Testcontainers and are skipped when Docker is not installe
 
 Pushes to `main` run tests and deploy Compose to `/opt/catalog-service`.
 
-Seed demo equipment **from documents** (clears Demo work orders + PPR maps,
-replaces assets, uploads passport PDFs via `POST /documents/from-text`, creates
-active assets with `documentIds`):
+**Fixaverse Demo** (`382715225649971203`) is the **client showcase** org. Full reseed
+(docs → assets → PPR maps → manager-report work orders):
 
 ```bash
 gh workflow run seed-demo-assets.yml -f org_id=382715225649971203
 ```
+
+Do not leave Demo with bare assets (no `documentIds`) or an empty work-order board.
 
 Gateway reaches the service at `http://host.docker.internal:<port>`.
