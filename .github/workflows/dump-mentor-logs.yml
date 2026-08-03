@@ -1,0 +1,55 @@
+name: Dump Mentor Logs
+
+on:
+  workflow_dispatch:
+    inputs:
+      since:
+        description: docker logs --since
+        required: false
+        default: "24h"
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mentor + dashboard assignee dump
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          SINCE: ${{ inputs.since }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/deploy_key
+          printf '%s\n' "$KEY" > /tmp/deploy_key
+          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no "${USER}@${HOST}" bash -s <<EOF
+          set -euo pipefail
+          echo "== mentor events =="
+          cd /opt/technologist-service/deploy
+          docker compose logs --since "${SINCE}" 2>&1 | grep -E 'event=mentor_|list_asset|document_mcp|mcp_|ERROR|WARN' | tail -120 || true
+          echo "== document-mcp =="
+          cd /opt/document-mcp/deploy 2>/dev/null || cd /opt/document-mcp 2>/dev/null || true
+          if [ -f docker-compose.yml ] || [ -f compose.yml ]; then
+            docker compose logs --since "${SINCE}" 2>&1 | grep -E 'list_asset|documentIds|upstream|ERROR|WARN|event=' | tail -80 || true
+          fi
+          echo "== smoke assignees =="
+          cd /opt/dashboard-service/deploy
+          docker compose exec -T dashboard-postgres psql -U dashboard -d dashboard -c "
+          SELECT id, title, status, assignee_id, asset_id, updated_at
+          FROM work_orders
+          WHERE org_id = '383177088934346755'
+            AND assignee_id IS NOT NULL
+          ORDER BY updated_at DESC NULLS LAST
+          LIMIT 15;
+          "
+          echo "== smoke assets document_ids =="
+          cd /opt/catalog-service/deploy
+          docker compose exec -T catalog-postgres psql -U catalog -d catalog -c "
+          SELECT id, name, document_ids, source, status
+          FROM assets
+          WHERE org_id = '383177088934346755'
+          ORDER BY name;
+          " 2>&1 || docker compose exec -T postgres psql -U postgres -d catalog -c "
+          SELECT id, name, document_ids, source, status FROM assets WHERE org_id = '383177088934346755' ORDER BY name;
+          " 2>&1 || true
+          EOF
