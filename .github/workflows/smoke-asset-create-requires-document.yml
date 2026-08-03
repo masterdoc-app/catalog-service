@@ -1,0 +1,65 @@
+name: Smoke asset create requires document
+
+on:
+  workflow_dispatch:
+    inputs:
+      org_id:
+        required: true
+        default: "383177088934346755"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject bare create; accept create with document
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          ORG_ID: ${{ inputs.org_id }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/deploy_key
+          printf '%s\n' "$KEY" > /tmp/deploy_key
+          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no "${USER}@${HOST}" \
+            ORG_ID="$ORG_ID" bash -s <<'EOF'
+          set -euo pipefail
+          curl -sf http://127.0.0.1:8091/health >/dev/null
+          SITE=$(curl -sS -H "X-Org-Id: $ORG_ID" http://127.0.0.1:8091/sites | python3 -c '
+          import json,sys
+          items=json.load(sys.stdin).get("items") or []
+          if not items: raise SystemExit("no sites")
+          print(items[0]["id"])
+          ')
+          echo "SITE=$SITE"
+
+          code1=$(curl -sS -o /tmp/b1 -w '%{http_code}' \
+            -H "X-Org-Id: $ORG_ID" -H "Content-Type: application/json" \
+            -d "{\"name\":\"Smoke no-doc\",\"siteId\":\"$SITE\"}" \
+            http://127.0.0.1:8091/assets)
+          body1=$(cat /tmp/b1)
+          echo "missing_docs: $code1 $body1"
+          test "$code1" = "400"
+          echo "$body1" | grep -q "document required"
+
+          code2=$(curl -sS -o /tmp/b2 -w '%{http_code}' \
+            -H "X-Org-Id: $ORG_ID" -H "Content-Type: application/json" \
+            -d "{\"name\":\"Smoke empty-doc\",\"siteId\":\"$SITE\",\"documentIds\":[]}" \
+            http://127.0.0.1:8091/assets)
+          body2=$(cat /tmp/b2)
+          echo "empty_docs: $code2 $body2"
+          test "$code2" = "400"
+          echo "$body2" | grep -q "document required"
+
+          DOC="smoke-req-doc-$(date +%s)-$$"
+          code3=$(curl -sS -o /tmp/b3 -w '%{http_code}' \
+            -H "X-Org-Id: $ORG_ID" -H "Content-Type: application/json" \
+            -d "{\"name\":\"Smoke with-doc\",\"siteId\":\"$SITE\",\"documentIds\":[\"$DOC\"],\"asDraft\":false}" \
+            http://127.0.0.1:8091/assets)
+          echo "with_doc: $code3 $(head -c 200 /tmp/b3)"
+          test "$code3" = "201"
+          AID=$(python3 -c 'import json; print(json.load(open("/tmp/b3"))["id"])')
+          curl -sS -o /dev/null -w 'delete:%{http_code}\n' -X DELETE \
+            -H "X-Org-Id: $ORG_ID" "http://127.0.0.1:8091/assets/$AID"
+          echo SMOKE_PASS
+          EOF
