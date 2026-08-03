@@ -26,7 +26,7 @@ jobs:
           set -euo pipefail
           echo "== mentor events =="
           cd /opt/technologist-service/deploy
-          docker compose logs --since "${SINCE}" 2>&1 | grep -E 'event=mentor_|list_asset|document_mcp|mcp_|ERROR|WARN' | tail -120 || true
+          docker compose logs --since "${SINCE}" 2>&1 | grep -E 'event=mentor_|event=agent_loop_|event=mcp_|event=openrouter_|list_asset|document_mcp|ERROR|WARN' | tail -200 || true
           echo "== document-mcp =="
           cd /opt/document-mcp/deploy 2>/dev/null || cd /opt/document-mcp 2>/dev/null || true
           if [ -f docker-compose.yml ] || [ -f compose.yml ]; then
