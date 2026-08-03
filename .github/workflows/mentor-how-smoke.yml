@@ -41,6 +41,23 @@ jobs:
           echo "WO_ID=\$WO_ID"
           [[ -n "\$WO_ID" ]]
 
+          ASSET_ID="\$(docker compose -f /opt/dashboard-service/deploy/docker-compose.yml exec -T dashboard-postgres \
+            psql -U dashboard -d dashboard -Atc \
+            "SELECT asset_id FROM work_orders WHERE id='\${WO_ID}';")"
+          echo "ASSET_ID=\$ASSET_ID"
+
+          curl -sS -X POST -H "X-Org-Id: \${ORG_ID}" -H "Content-Type: application/json" \
+            -d "{\"name\":\"list_asset_documents\",\"arguments\":{\"assetId\":\"\${ASSET_ID}\"}}" \
+            http://127.0.0.1:8097/mcp/tools/call >/tmp/list-docs.json
+          DOC_ID="\$(python3 -c 'import json; j=json.load(open("/tmp/list-docs.json")); docs=(j.get("result") or {}).get("documents") or []; print((docs[0].get("id") or docs[0].get("documentId") or "") if docs else "")')"
+          echo "DOC_ID=\$DOC_ID"
+          if [[ -n "\$DOC_ID" ]]; then
+            curl -sS -H "X-Org-Id: \${ORG_ID}" "http://127.0.0.1:8096/documents/\${DOC_ID}/text" | python3 -c 'import json,sys; j=json.load(sys.stdin); t=j.get("text") or ""; print("DOC_TEXT_CHARS", len(t)); print(t[:800])'
+            curl -sS -X POST -H "X-Org-Id: \${ORG_ID}" -H "Content-Type: application/json" \
+              -d "{\"name\":\"get_document_text\",\"arguments\":{\"documentId\":\"\${DOC_ID}\",\"offset\":0,\"limit\":16000}}" \
+              http://127.0.0.1:8097/mcp/tools/call | python3 -c 'import json,sys; j=json.load(sys.stdin); r=j.get("result") or {}; t=r.get("text") or ""; print("MCP_TEXT_CHARS", len(t), "totalChars", r.get("totalChars"), "ok", j.get("ok")); print(t[:800])'
+          fi
+
           CODE="\$(curl -sS -o /tmp/mentor-how.json -w '%{http_code}' -X POST \
             -H "X-Org-Id: \${ORG_ID}" -H "X-User-Id: \${ENGINEER_ID}" \
             -H "Content-Type: application/json" \
@@ -56,7 +73,10 @@ jobs:
           reply = j.get("reply") or ""
           print("REPLY_CHARS", len(reply))
           low = reply.lower()
-          defer = bool(re.search(r"найдете в (этом )?документ|смотрите в (паспорт|руководств|документ)|см\.?\s*паспорт|см\.?\s*руководств", low))
+          defer = bool(re.search(
+              r"найдете в (этом )?документ|смотрите в (паспорт|руководств|документ)|см\.?\s*паспорт|см\.?\s*руководств|прочитать остальн|остальную часть документ",
+              low,
+          ))
           steps = bool(re.search(r"\d[\).\]]|шаг|замени|отключ|блокир|момент|torque|нм|filter|фильтр|масло|oil", low))
           print("DEFER", defer, "HAS_STEPS_HINT", steps)
           if defer and not steps:
