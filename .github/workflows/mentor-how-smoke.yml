@@ -1,0 +1,74 @@
+name: Mentor How Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      org_id:
+        default: "383177088934346755"
+      engineer_user_id:
+        default: "384475024746086403"
+      work_order_id:
+        description: "WO already assigned to engineer (optional)"
+        required: false
+        default: ""
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask mentor how-to from docs
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          ORG_ID: ${{ inputs.org_id }}
+          ENGINEER_ID: ${{ inputs.engineer_user_id }}
+          WO_ID_IN: ${{ inputs.work_order_id }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/deploy_key
+          printf '%s\n' "$KEY" > /tmp/deploy_key
+          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no "${USER}@${HOST}" bash -s <<EOF
+          set -euo pipefail
+          ORG_ID='${ORG_ID}'
+          ENGINEER_ID='${ENGINEER_ID}'
+          WO_ID='${WO_ID_IN}'
+          if [[ -z "\$WO_ID" ]]; then
+            WO_ID="\$(docker compose -f /opt/dashboard-service/deploy/docker-compose.yml exec -T dashboard-postgres \
+              psql -U dashboard -d dashboard -Atc \
+              "SELECT id FROM work_orders WHERE org_id='\${ORG_ID}' AND assignee_id='\${ENGINEER_ID}' ORDER BY updated_at DESC NULLS LAST LIMIT 1;")"
+          fi
+          echo "WO_ID=\$WO_ID"
+          [[ -n "\$WO_ID" ]]
+
+          CODE="\$(curl -sS -o /tmp/mentor-how.json -w '%{http_code}' -X POST \
+            -H "X-Org-Id: \${ORG_ID}" -H "X-User-Id: \${ENGINEER_ID}" \
+            -H "Content-Type: application/json" \
+            -d "{\"workOrderId\":\"\${WO_ID}\",\"message\":\"расскажи подробней как делать\"}" \
+            http://127.0.0.1:8095/ai/mentor)"
+          echo "MENTOR_HTTP=\$CODE"
+          cat /tmp/mentor-how.json; echo
+          [[ "\$CODE" == "200" ]]
+
+          python3 - <<'PY'
+          import json, re, sys
+          j = json.load(open("/tmp/mentor-how.json"))
+          reply = j.get("reply") or ""
+          print("REPLY_CHARS", len(reply))
+          low = reply.lower()
+          defer = bool(re.search(r"найдете в (этом )?документ|смотрите в (паспорт|руководств|документ)|см\.?\s*паспорт|см\.?\s*руководств", low))
+          steps = bool(re.search(r"\d[\).\]]|шаг|замени|отключ|блокир|момент|torque|нм|filter|фильтр|масло|oil", low))
+          print("DEFER", defer, "HAS_STEPS_HINT", steps)
+          if defer and not steps:
+              print("FAIL: deferred to documentation without procedure")
+              sys.exit(1)
+          if len(reply) < 120:
+              print("FAIL: reply too short for how-to")
+              sys.exit(1)
+          print("MENTOR_HOW_OK")
+          PY
+
+          echo "== recent mentor mcp =="
+          cd /opt/technologist-service/deploy
+          docker compose logs --since 5m 2>&1 | grep -E 'event=mentor_|mcp_call|get_document_text|agent_loop' | tail -40 || true
+          EOF
