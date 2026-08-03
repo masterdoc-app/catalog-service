@@ -143,11 +143,12 @@ class AssetQrRoutesTest {
         siteId: String,
         name: String = "Asset",
         active: Boolean,
+        documentId: String = "doc-${java.util.UUID.randomUUID()}",
     ): Asset {
         val response = post("/assets") {
             header("X-Org-Id", orgId)
             contentType(ContentType.Application.Json)
-            setBody("""{"name":"$name","siteId":"$siteId","asDraft":${!active}}""")
+            setBody("""{"name":"$name","siteId":"$siteId","asDraft":${!active},"documentIds":["$documentId"]}""")
         }
         return json.decodeFromString(response.bodyAsText())
     }

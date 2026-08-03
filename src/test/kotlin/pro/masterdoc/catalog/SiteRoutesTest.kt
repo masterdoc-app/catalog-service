@@ -131,7 +131,7 @@ class SiteRoutesTest {
         client.post("/assets") {
             header("X-Org-Id", "org-1")
             contentType(ContentType.Application.Json)
-            setBody("""{"name":"A","siteId":"s1"}""")
+            setBody("""{"name":"A","siteId":"s1","documentIds":["doc-site-delete-blocked"]}""")
         }
         val delete = client.delete("/sites/s1") { header("X-Org-Id", "org-1") }
         assertEquals(HttpStatusCode.Conflict, delete.status)
