@@ -87,21 +87,27 @@ jobs:
           WO_ID="$(python3 -c 'import json; print(json.load(open("/tmp/wo-target.json"))["id"])')"
           echo "WO_ID=$WO_ID"
 
-          if [[ -n "$OTHER_ASSET_ID" ]]; then
-            CODE2="$(curl -sS -o /tmp/wo-other.json -w "%{http_code}" -X POST \
-              -H "X-Org-Id: ${ORG_ID}" -H "X-User-Id: smoke-requester" \
-              -H "X-Caller-Features: tickets,board" \
-              -H "Content-Type: application/json" \
-              -d "{\"type\":\"emergency\",\"title\":\"Other asset distractor\",\"assetId\":\"${OTHER_ASSET_ID}\",\"siteId\":\"${OTHER_SITE_ID}\",\"dueAt\":\"${DUE}\",\"description\":\"out of engineer QR scope\"}" \
-              http://127.0.0.1:8092/work-orders)"
-            echo "CREATE_OTHER=$CODE2"
-            [[ "$CODE2" == "200" || "$CODE2" == "201" ]]
-            OTHER_WO="$(python3 -c 'import json; print(json.load(open("/tmp/wo-other.json"))["id"])')"
-            echo "OTHER_WO=$OTHER_WO"
-          else
-            echo "OTHER_ASSET_ID= (single active asset — scope check still asserts target WO visible)"
-            OTHER_WO=""
+          if [[ -z "$OTHER_ASSET_ID" ]]; then
+            CREATE_ASSET="$(curl -sS -o /tmp/other-asset.json -w "%{http_code}" -X POST \
+              -H "X-Org-Id: ${ORG_ID}" -H "Content-Type: application/json" \
+              -d "{\"name\":\"QR smoke distractor\",\"siteId\":\"${SITE_ID}\",\"asDraft\":false}" \
+              http://127.0.0.1:8091/assets)"
+            echo "CREATE_DISTRACTOR_ASSET=$CREATE_ASSET"
+            [[ "$CREATE_ASSET" == "200" || "$CREATE_ASSET" == "201" ]]
+            OTHER_ASSET_ID="$(python3 -c 'import json; print(json.load(open("/tmp/other-asset.json"))["id"])')"
+            OTHER_SITE_ID="$SITE_ID"
+            echo "OTHER_ASSET_ID=$OTHER_ASSET_ID"
           fi
+          CODE2="$(curl -sS -o /tmp/wo-other.json -w "%{http_code}" -X POST \
+            -H "X-Org-Id: ${ORG_ID}" -H "X-User-Id: smoke-requester" \
+            -H "X-Caller-Features: tickets,board" \
+            -H "Content-Type: application/json" \
+            -d "{\"type\":\"emergency\",\"title\":\"Other asset distractor\",\"assetId\":\"${OTHER_ASSET_ID}\",\"siteId\":\"${OTHER_SITE_ID}\",\"dueAt\":\"${DUE}\",\"description\":\"out of engineer QR scope\"}" \
+            http://127.0.0.1:8092/work-orders)"
+          echo "CREATE_OTHER=$CODE2"
+          [[ "$CODE2" == "200" || "$CODE2" == "201" ]]
+          OTHER_WO="$(python3 -c 'import json; print(json.load(open("/tmp/wo-other.json"))["id"])')"
+          echo "OTHER_WO=$OTHER_WO"
 
           # Scope engineer to target asset only
           curl -fsS -X PUT \
@@ -134,19 +140,15 @@ jobs:
           echo "LIST=$LIST"
           [[ "$LIST" == "200" ]]
           python3 -c '
-          import json,os
-          items=json.load(open("/tmp/wo-list.json")).get("items") or json.load(open("/tmp/wo-list.json"))
-          if isinstance(items, dict):
-            items=items.get("items") or []
+          import json
+          raw=json.load(open("/tmp/wo-list.json"))
+          items=raw if isinstance(raw, list) else (raw.get("items") or [])
           target="'"$ASSET_ID"'"
-          other="'"$OTHER_ASSET_ID"'"
           ids={i.get("id") for i in items}
           assets={i.get("assetId") for i in items}
           assert "'"$WO_ID"'" in ids, ("missing target WO", ids)
-          assert assets <= {target} or all(a==target for a in assets if a), ("leak", assets)
-          if other:
-            assert all(i.get("assetId")==target for i in items), ("scoped list leaked other asset", assets)
-            assert "'"$OTHER_WO"'" not in ids, ("other WO visible to scoped engineer", ids)
+          assert all(a==target for a in assets if a), ("scoped list leaked other asset", assets)
+          assert "'"$OTHER_WO"'" not in ids, ("other WO visible to scoped engineer", ids)
           print("SCOPED_COUNT="+str(len(items)))
           print("SCOPED_ASSETS="+",".join(sorted(a for a in assets if a)))
           '
@@ -161,7 +163,7 @@ jobs:
           test -s /tmp/qr-smoke/hitachi-qr.pdf
           test "$(dd if=/tmp/qr-smoke/hitachi-qr.pdf bs=5 count=1 2>/dev/null)" = "%PDF-"
           # Extract summary lines
-          rg -n "ASSET_|QR_|WO_|BY_QR|SCOPED_|RESOLVED_|PDF_|CREATE_|OTHER_|REMOTE_OK" /tmp/qr-smoke/remote.log || true
+          grep -E "ASSET_|QR_|WO_|BY_QR|SCOPED_|RESOLVED_|PDF_|CREATE_|OTHER_|REMOTE_OK" /tmp/qr-smoke/remote.log || true
 
       - name: Upload QR PDF artifact
         uses: actions/upload-artifact@v4
