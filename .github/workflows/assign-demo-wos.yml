@@ -1,0 +1,57 @@
+name: Assign Demo WOs to Engineer
+
+on:
+  workflow_dispatch:
+    inputs:
+      org_id:
+        default: "382715225649971203"
+      engineer_user_id:
+        default: "384661810608865283"
+      limit:
+        default: "8"
+
+jobs:
+  assign:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assign open WOs
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          ORG_ID: ${{ inputs.org_id }}
+          ENGINEER_ID: ${{ inputs.engineer_user_id }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/deploy_key
+          printf '%s\n' "$KEY" > /tmp/deploy_key
+          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no "${USER}@${HOST}" \
+            ORG_ID="$ORG_ID" ENGINEER_ID="$ENGINEER_ID" LIMIT="$LIMIT" bash -s <<'EOF'
+          set -euo pipefail
+          SITE="$(curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/sites | python3 -c 'import json,sys; print((json.load(sys.stdin).get("items") or [{"id":"ceh-1"}])[0]["id"])')"
+          curl -fsS -X PUT -H "X-Org-Id: ${ORG_ID}" -H "Content-Type: application/json" \
+            -d "{\"siteIds\":[\"${SITE}\"],\"assetIds\":[]}" \
+            "http://127.0.0.1:8091/user-scopes/${ENGINEER_ID}" >/dev/null
+          echo "scope site=$SITE"
+
+          printf '%s\n' \
+            "UPDATE work_orders SET assignee_id = '${ENGINEER_ID}'
+             WHERE id IN (
+               SELECT id FROM work_orders
+               WHERE org_id = '${ORG_ID}'
+                 AND status IN ('new','in_progress','assigned')
+                 AND (assignee_id IS NULL OR assignee_id = '${ENGINEER_ID}')
+               ORDER BY
+                 CASE WHEN type = 'emergency' THEN 0 ELSE 1 END,
+                 updated_at DESC NULLS LAST
+               LIMIT ${LIMIT}
+             );
+             SELECT id, title, type, status
+             FROM work_orders
+             WHERE org_id = '${ORG_ID}' AND assignee_id = '${ENGINEER_ID}'
+             ORDER BY updated_at DESC NULLS LAST;" \
+            | docker compose -f /opt/dashboard-service/deploy/docker-compose.yml \
+              exec -T dashboard-postgres \
+              psql -U dashboard -d dashboard -v ON_ERROR_STOP=1
+          EOF
