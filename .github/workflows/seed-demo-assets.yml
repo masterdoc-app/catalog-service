@@ -242,5 +242,9 @@ jobs:
             "http://127.0.0.1:8092/internal/orgs/${ORG_ID}/seed-manager-reports")"
           echo "POST seed-manager-reports -> $CODE $(cat /tmp/wo-seed.json)"
           [[ "$CODE" == "200" ]] || exit 1
-          python3 -c 'import json; r=json.load(open("/tmp/wo-seed.json")); print(f"WO deleted={r.get(\"deleted\")} created={r.get(\"created\")}")'
+          python3 - <<'PY'
+          import json
+          r = json.load(open("/tmp/wo-seed.json"))
+          print(f"WO deleted={r.get('deleted')} created={r.get('created')}")
+          PY
           EOF
