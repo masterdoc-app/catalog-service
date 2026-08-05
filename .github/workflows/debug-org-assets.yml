@@ -36,4 +36,29 @@ jobs:
           curl -sS -H "X-Org-Id: ${ORG_ID}" "http://127.0.0.1:8091/user-scopes/${USER_ID}" | python3 -m json.tool
           echo "== sites =="
           curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/sites | python3 -m json.tool | head -60
+          echo "== candidates + covers for user =="
+          ORG_ID="${ORG_ID}" USER_ID="${USER_ID}" python3 - <<'PY'
+          import json, os, urllib.request
+          org = os.environ["ORG_ID"]
+          uid = os.environ["USER_ID"]
+          assets = json.load(urllib.request.urlopen(urllib.request.Request(
+              "http://127.0.0.1:8091/assets", headers={"X-Org-Id": org})))["items"]
+          for a in assets:
+              cid = a["id"]
+              cand = json.load(urllib.request.urlopen(urllib.request.Request(
+                  f"http://127.0.0.1:8091/user-scopes/candidates/{cid}", headers={"X-Org-Id": org})))
+              covers = json.load(urllib.request.urlopen(urllib.request.Request(
+                  f"http://127.0.0.1:8091/user-scopes/{uid}/covers/{cid}", headers={"X-Org-Id": org})))
+              ids = cand.get("userIds") or []
+              print(
+                  a.get("name"),
+                  "site=" + str(a.get("siteId")),
+                  "in_candidates=" + str(uid in ids),
+                  "covers=" + str(covers.get("covers")),
+                  "n=" + str(len(ids)),
+              )
+          PY
+          echo "== open WO assignee counts =="
+          printf '%s\n' "SELECT COALESCE(assignee_id,'(none)') AS assignee_id, count(*) FROM work_orders WHERE org_id='${ORG_ID}' AND status IN ('new','assigned','in_progress') GROUP BY 1 ORDER BY 2 DESC;" \
+            | docker compose -f /opt/dashboard-service/deploy/docker-compose.yml exec -T dashboard-postgres psql -U dashboard -d dashboard -v ON_ERROR_STOP=1 || true
           EOF
