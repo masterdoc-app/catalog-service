@@ -10,7 +10,7 @@ on:
         required: true
         default: "384475024746086403"
       site_ids:
-        description: Comma-separated site ids
+        description: Comma-separated site ids (use "-" to clear all sites)
         required: true
         default: "ceh-1"
 
@@ -30,7 +30,7 @@ jobs:
           set -euo pipefail
           install -m 600 /dev/null /tmp/deploy_key
           printf '%s\n' "$KEY" > /tmp/deploy_key
-          BODY="$(SITE_IDS="$SITE_IDS" python3 -c 'import json,os; print(json.dumps({"siteIds":[s for s in os.environ["SITE_IDS"].split(",") if s],"assetIds":[]}))')"
+          BODY="$(SITE_IDS="$SITE_IDS" python3 -c 'import json,os; raw=os.environ["SITE_IDS"].strip(); sites=[] if raw in ("","-","none") else [s for s in raw.split(",") if s]; print(json.dumps({"siteIds":sites,"assetIds":[]}))')"
           ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no "${USER}@${HOST}" \
             "curl -sS -X PUT -H 'X-Org-Id: ${ORG_ID}' -H 'Content-Type: application/json' \
             -d $(printf %q "$BODY") \
