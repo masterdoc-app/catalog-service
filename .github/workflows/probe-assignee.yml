@@ -1,0 +1,96 @@
+name: Probe Assignee Eligibility
+
+on:
+  workflow_dispatch:
+    inputs:
+      org_id:
+        required: true
+        default: "382715225649971203"
+      work_order_id:
+        description: Optional WO id; otherwise first open WO
+        required: false
+        default: ""
+      user_ids:
+        description: Comma-separated user ids to test
+        required: true
+        default: "384475024746086403,384661810608865283,382715229189963779"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Features + candidates + PATCH
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          ORG_ID: ${{ inputs.org_id }}
+          WO_ID: ${{ inputs.work_order_id }}
+          USER_IDS: ${{ inputs.user_ids }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/deploy_key
+          printf '%s\n' "$KEY" > /tmp/deploy_key
+          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no "${USER}@${HOST}" \
+            ORG_ID="$ORG_ID" WO_ID="$WO_ID" USER_IDS="$USER_IDS" bash -s <<'EOF'
+          set -euo pipefail
+          echo "== sites =="
+          curl -sS -H "X-Org-Id: ${ORG_ID}" http://127.0.0.1:8091/sites | python3 -m json.tool | head -40
+
+          if [[ -z "${WO_ID}" ]]; then
+            curl -sS -H "X-Org-Id: ${ORG_ID}" "http://127.0.0.1:8092/work-orders?limit=50" >/tmp/wos.json
+            WO_ID="$(python3 - <<'PY'
+          import json
+          raw=json.load(open("/tmp/wos.json"))
+          items=raw.get("items") if isinstance(raw, dict) else raw
+          items=items or []
+          for w in items:
+            if str(w.get("status","")).lower()=="new" and w.get("assetId"):
+              print(w["id"]); break
+          else:
+            print(items[0]["id"] if items else "")
+          PY
+          )"
+          fi
+          echo "WO_ID=$WO_ID"
+          [[ -n "$WO_ID" ]]
+
+          curl -sS -H "X-Org-Id: ${ORG_ID}" "http://127.0.0.1:8092/work-orders/${WO_ID}" | tee /tmp/wo.json | python3 -m json.tool | head -40
+          ASSET_ID="$(python3 -c 'import json; print(json.load(open("/tmp/wo.json"))["assetId"])')"
+          echo "ASSET_ID=$ASSET_ID"
+
+          echo "== candidates =="
+          curl -sS -H "X-Org-Id: ${ORG_ID}" \
+            "http://127.0.0.1:8091/user-scopes/candidates/${ASSET_ID}" | tee /tmp/cand.json | python3 -m json.tool
+
+          IFS=',' read -ra IDS <<< "$USER_IDS"
+          for uid in "${IDS[@]}"; do
+            uid="$(echo "$uid" | tr -d '[:space:]')"
+            [[ -n "$uid" ]] || continue
+            echo "== user $uid =="
+            echo "-- scope --"
+            curl -sS -H "X-Org-Id: ${ORG_ID}" "http://127.0.0.1:8091/user-scopes/${uid}" | python3 -m json.tool
+            echo "-- covers --"
+            curl -sS -H "X-Org-Id: ${ORG_ID}" \
+              "http://127.0.0.1:8091/user-scopes/${uid}/covers/${ASSET_ID}" | python3 -m json.tool
+            echo "-- features --"
+            curl -sS -H "X-Org-Id: ${ORG_ID}" \
+              "http://127.0.0.1:8082/users/${uid}/features" | tee "/tmp/feat-${uid}.json" | python3 -m json.tool || true
+            echo "-- PATCH assignee --"
+            CODE="$(curl -sS -o "/tmp/patch-${uid}.json" -w '%{http_code}' -X PATCH \
+              -H "X-Org-Id: ${ORG_ID}" -H "X-User-Id: probe-dispatcher" \
+              -H "X-Caller-Features: board,admin" \
+              -H "Content-Type: application/json" \
+              -d "{\"assigneeId\":\"${uid}\"}" \
+              "http://127.0.0.1:8092/work-orders/${WO_ID}")"
+            echo "PATCH_HTTP=$CODE body=$(head -c 400 /tmp/patch-${uid}.json)"
+            if [[ "$CODE" == "200" ]]; then
+              curl -sS -o /dev/null -X PATCH \
+                -H "X-Org-Id: ${ORG_ID}" -H "X-User-Id: probe-dispatcher" \
+                -H "X-Caller-Features: board,admin" \
+                -H "Content-Type: application/json" \
+                -d '{"assigneeId":null}' \
+                "http://127.0.0.1:8092/work-orders/${WO_ID}" || true
+            fi
+          done
+          EOF
